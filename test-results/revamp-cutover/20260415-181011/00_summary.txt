@@ -1,8 +1,0 @@
-﻿REVAMP CUTOVER GO/NO-GO: FAIL
-Artifacts: D:\Project1\test-results\revamp-cutover\20260415-181011
-
-Checks:
-- orchestrator_runtime: False (The term 'if' is not recognized as the name of a cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again.)
-
-Blocking reasons:
-- orchestrator_runtime: The term 'if' is not recognized as the name of a cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again.

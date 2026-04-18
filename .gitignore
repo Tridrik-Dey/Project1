@@ -31,3 +31,22 @@ frontend/node_modules/
 
 # Runtime-generated files
 backend/uploads/
+
+# Compiled class files
+*.class
+
+# Test results
+test-results/
+
+# Temp / scratch files
+_done*.txt
+_req*.txt
+_mvn_test.txt
+_sp_test.txt
+
+# Debug screenshots
+frontend/.*.png
+
+# Vite generated files
+frontend/vite.config.js
+frontend/vite.config.d.ts
