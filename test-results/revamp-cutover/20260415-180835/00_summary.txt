@@ -1,0 +1,8 @@
+﻿REVAMP CUTOVER GO/NO-GO: FAIL
+Artifacts: D:\Project1\test-results\revamp-cutover\20260415-180835
+
+Checks:
+- orchestrator_runtime: False (docker : time="2026-04-15T18:08:35+02:00" level=warning msg="D:\\Project1\\docker-compose.yml: the attribute `version` )
+
+Blocking reasons:
+- orchestrator_runtime: docker : time="2026-04-15T18:08:35+02:00" level=warning msg="D:\\Project1\\docker-compose.yml: the attribute `version` 

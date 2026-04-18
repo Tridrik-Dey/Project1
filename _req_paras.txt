@@ -1,0 +1,54 @@
+﻿6. Mock-up dell'Applicativo
+I mock-up seguenti rappresentano la visione progettuale dell'interfaccia dell'Albo Fornitori Digitale del Gruppo Solco. 24 schermate coprono l'intero flusso operativo.
+6.1 Front-end — Area Pubblica e Fornitore
+Le schermate mostrano l'esperienza del fornitore: landing page, wizard iscrizione Albo A e B, area riservata, conferma invio e template e-mail.
+● FE Landing Page Pubblica — Selezione Albo A / Albo B
+La pagina pubblica di accesso presenta le due card di iscrizione con icone, descrizioni e vantaggi. Design con palette brand Solco.
+● FE Wizard Iscrizione — Sezione 1: Dati Anagrafici
+Step-by-step con barra avanzamento a 5 fasi. Validazione inline con errore CAP evidenziato, badge salvataggio automatico, upload foto profilo.
+● FE Wizard Iscrizione — Sezione 3A: Ambiti Tematici Docente
+Lista ambiti con checkbox: alla selezione si espandono campo specifica tematiche e selettore anni esperienza. Campo presentazione con contatore caratteri.
+● FE Area Riservata Fornitore — Dashboard Personale
+Banner stato attivo con barra rinnovo. KPI card (punteggio, collaborazioni, documenti, completamento). Profilo pubblico, documenti con validità e comunicazioni.
+● FE Wizard — Sezione 2: Selezione Tipologia Professionale
+Griglia 5x2 di card tipologia. Card Docente/Formatore selezionata evidenziata. Callout con implicazioni scelta. Campo ATECO per categoria Altro.
+● FE Wizard — Sezione 5: Dichiarazioni e Consensi
+Tre blocchi: dichiarazioni legali, privacy GDPR, Codice Etico. Consensi facoltativi distinti. Firma OTP. Pulsante invio abilitato solo con tutte le voci obbligatorie.
+● FE Wizard — Riepilogo Pre-Invio
+Tre card affiancate (Dati personali, Competenze, Disponibilità) con pulsante Modifica. Strip verde dichiarazioni. Pulsante invio verde prominente.
+● FE Conferma Invio — Codice di Protocollo
+Cerchio verde checkmark, codice protocollo in evidenza con copia. Card: e-mail conferma, tempi revisione, iter integrazione. CTA area riservata.
+● FE Wizard Albo B — Sezione 1: Dati Aziendali
+Campi societari (P.IVA, REA, CCIAA, data costituzione), sede, contatti, legale rappresentante e referente operativo per Gruppo Solco.
+● FE Wizard Albo B — Sezione 3: Selezione Servizi
+Accordion cinque categorie. Per ogni categoria aperta: checkbox servizi, counter selezionati e campo descrizione obbligatorio. Banner riepilogo categorie attive.
+● FE Template E-mail — Approvazione Iscrizione
+E-mail con header blu Solco, banda gialla brand, banner verde conferma, box dati iscrizione, tre punti azione e CTA area riservata. Rendering realistico client e-mail.
+6.2 Back-end — Area Amministrativa
+Le schermate mostrano l'area admin: dashboard, lista fornitori, schede profilo, coda revisioni, valutazioni e report.
+● BE Dashboard Amministrativa
+Home back-end: sidebar Solco, cinque KPI card, alert urgenze, coda candidature con countdown e grafico iscrizioni mensili Albo A vs B.
+● BE Lista Fornitori Albo A con Filtri Avanzati
+Ricerca full-text e cinque filtri combinabili con badge rimovibili. Tabella avatar, tipologia, ambiti-tag, stelle e stato colorato. Paginazione numerata.
+● BE Scheda Profilo Fornitore — Vista Amministratore
+Header banda stato, tab Profilo/Documenti/Valutazioni/Storico/Note/Comunicazioni. Pannello Note solo admin (giallo). Barra azioni fissa.
+● BE Coda Candidature — Revisioni Pendenti
+KPI strip stati. Tab filtro. Badge urgenza rosso per oltre 5 giorni. Pulsante azione primario per urgenti, outline per le altre.
+● BE Scheda Revisione Candidatura con Azioni
+Banner urgenza, header candidato, checklist documentale. Tab profilo/storico/note. Tre azioni affiancate: Approva (verde), Integrazione (giallo), Rigetta (rosso) con campi motivazione.
+● BE Form Richiesta Integrazione Documentale
+Checkbox documenti con istruzioni specifiche per ognuno. Campo scadenza risposta. Messaggio personalizzato. Anteprima e-mail in tempo reale.
+● BE Gestione Inviti — Lista e Monitoraggio
+KPI completati/attesa/scaduti. Tabella: destinatario, stato con icona, barra avanzamento in-compilazione. Azioni rinnova/apri profilo per ogni stato.
+● BE Form Nuovo Invito — Con Anteprima E-mail
+Layout due colonne: form (tipo albo, destinatario, durata, messaggio) e anteprima live e-mail con logo e link dinamico.
+● BE Pagina Valutazioni Complessive
+Quattro KPI. Tabella con fornitore, tipo, data, commento, mini-barre dimensioni e stelle medie. Filtri per periodo, punteggio e valutatore.
+● BE Form Inserimento Valutazione
+Stelle complessivo + cinque dimensioni facoltative. Tipo collaborazione, periodo, riferimento. Commento con contatore. Pannello storico laterale. Nota anonimato.
+● BE Dettaglio Valutazioni — Vista Analitica
+Punteggio aggregato, barre dimensioni, distribuzione punteggi. Lista cronologica valutazioni con mini-barre e anonimizzazione valutatore.
+● BE Scheda Azienda Albo B — Vista Amministratore
+Header banda verde, mini-card rapide (fatturato, dipendenti, accreditamenti, valutazione). Certificazioni ISO con scadenze. Servizi per categoria.
+● BE Report e Statistiche
+Sei KPI, grafico iscrizioni mensili, ranking ambiti, distribuzione stati, top 5 per valutazione, esportazioni rapide Excel.

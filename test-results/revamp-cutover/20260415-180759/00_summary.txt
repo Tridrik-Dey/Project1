@@ -1,0 +1,8 @@
+﻿REVAMP CUTOVER GO/NO-GO: FAIL
+Artifacts: D:\Project1\test-results\revamp-cutover\20260415-180759
+
+Checks:
+- orchestrator_runtime: False (time="2026-04-15T18:07:59+02:00" level=warning msg="D:\\Project1\\docker-compose.yml: the attribute `version` is obsolete, it will be ignored, please remove it to avoid potential confusion")
+
+Blocking reasons:
+- orchestrator_runtime: time="2026-04-15T18:07:59+02:00" level=warning msg="D:\\Project1\\docker-compose.yml: the attribute `version` is obsolete, it will be ignored, please remove it to avoid potential confusion"

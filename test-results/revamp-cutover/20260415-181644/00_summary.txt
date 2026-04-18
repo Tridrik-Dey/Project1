@@ -1,0 +1,12 @@
+﻿REVAMP CUTOVER GO/NO-GO: FAIL
+Artifacts: D:\Project1\test-results\revamp-cutover\20260415-181644
+
+Checks:
+- phase_closeout_postgres: False (FAILED; see test-results\revamp-cutover\20260415-181644\01_phase_closeout.log)
+- runtime_switch_and_strict_gate: True (PASS)
+- pre_smoke_runtime_ready: True (Runtime reachable before smoke checks.)
+- post_switch_smoke: True (PASS)
+- post_smoke_runtime_ready: True (Runtime reachable after smoke checks.)
+
+Blocking reasons:
+- phase_closeout_postgres: FAILED; see test-results\revamp-cutover\20260415-181644\01_phase_closeout.log

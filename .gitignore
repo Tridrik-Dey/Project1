@@ -1,0 +1,33 @@
+# OS / Editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+*.out
+*.err
+backend/.be*.log
+frontend/.fe*.log
+frontend/.ui-preview.log
+
+# Build artifacts
+backend/target/
+frontend/dist/
+frontend/test-results/
+frontend/playwright-report/
+
+# Dependencies / tool caches
+frontend/node_modules/
+.m2/
+
+# Runtime-generated files
+backend/uploads/

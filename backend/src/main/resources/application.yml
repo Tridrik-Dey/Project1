@@ -1,0 +1,66 @@
+server:
+  port: 8081
+
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5433/supplier_platform
+    username: supplier_admin
+    password: supplier_pass
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+  flyway:
+    enabled: false   # migrations already run manually
+  mail:
+    host: ${MAIL_HOST:smtp.gmail.com}
+    port: ${MAIL_PORT:587}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+
+app:
+  mail:
+    fail-fast: ${MAIL_FAIL_FAST:false}
+    retry:
+      max-attempts: ${MAIL_RETRY_MAX_ATTEMPTS:3}
+      backoff-ms: ${MAIL_RETRY_BACKOFF_MS:500}
+  jwt:
+    secret: 404E635266556A586E3272357538782F413F4428472B4B6250645367566B5970
+    expiration-ms: 86400000
+  file:
+    upload-dir: D:/Project1/backend/uploads
+  reminders:
+    document-expiry:
+      days-before: 30
+      cron: "0 * * * * *"
+      mail:
+        enabled: ${REMINDER_MAIL_ENABLED:false}
+        from: ${REMINDER_MAIL_FROM:no-reply@supplierplatform.local}
+  reviews:
+    status-mail:
+      enabled: ${REVIEW_STATUS_MAIL_ENABLED:true}
+      from: ${REVIEW_STATUS_MAIL_FROM:${app.reminders.document-expiry.mail.from:no-reply@supplierplatform.local}}
+  support:
+    contact:
+      enabled: ${SUPPORT_CONTACT_ENABLED:true}
+      to: ${SUPPORT_CONTACT_TO:${spring.mail.username:}}
+      from: ${SUPPORT_CONTACT_FROM:${app.reviews.status-mail.from:${spring.mail.username:no-reply@supplierplatform.local}}}
+  features:
+    revamp:
+      read-enabled: ${FEATURE_REVAMP_READ_ENABLED:true}
+      write-enabled: ${FEATURE_REVAMP_WRITE_ENABLED:true}
+      alias-enabled: ${FEATURE_REVAMP_ALIAS_ENABLED:true}
+      new-wizard-ab: ${FEATURE_NEW_WIZARD_AB:true}
+      admin-v2: ${FEATURE_ADMIN_V2:true}
+      evaluation-v2: ${FEATURE_EVALUATION_V2:true}
+      renewal-v2: ${FEATURE_RENEWAL_V2:true}

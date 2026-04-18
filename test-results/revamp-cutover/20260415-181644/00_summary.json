@@ -1,0 +1,35 @@
+﻿{
+    "status":  "FAIL",
+    "outputDir":  "D:\\Project1\\test-results\\revamp-cutover\\20260415-181644",
+    "checks":  [
+                   {
+                       "name":  "phase_closeout_postgres",
+                       "passed":  false,
+                       "details":  "FAILED; see test-results\\revamp-cutover\\20260415-181644\\01_phase_closeout.log"
+                   },
+                   {
+                       "name":  "runtime_switch_and_strict_gate",
+                       "passed":  true,
+                       "details":  "PASS"
+                   },
+                   {
+                       "name":  "pre_smoke_runtime_ready",
+                       "passed":  true,
+                       "details":  "Runtime reachable before smoke checks."
+                   },
+                   {
+                       "name":  "post_switch_smoke",
+                       "passed":  true,
+                       "details":  "PASS"
+                   },
+                   {
+                       "name":  "post_smoke_runtime_ready",
+                       "passed":  true,
+                       "details":  "Runtime reachable after smoke checks."
+                   }
+               ],
+    "blockingReasons":  [
+                            "phase_closeout_postgres: FAILED; see test-results\\revamp-cutover\\20260415-181644\\01_phase_closeout.log"
+                        ],
+    "completedAt":  "2026-04-15T18:21:39"
+}

@@ -1,0 +1,377 @@
+package com.supplierplatform.revamp.service;
+
+import com.supplierplatform.common.EntityNotFoundException;
+import com.supplierplatform.revamp.dto.RevampEvaluationAggregateDto;
+import com.supplierplatform.revamp.dto.RevampEvaluationAnalyticsDto;
+import com.supplierplatform.revamp.dto.RevampEvaluationHistoryItemDto;
+import com.supplierplatform.revamp.dto.RevampEvaluationOverviewDto;
+import com.supplierplatform.revamp.dto.RevampEvaluationOverviewRowDto;
+import com.supplierplatform.revamp.dto.RevampEvaluationSummaryDto;
+import com.supplierplatform.revamp.mapper.RevampEvaluationMapper;
+import com.supplierplatform.revamp.model.RevampEvaluation;
+import com.supplierplatform.revamp.model.RevampEvaluationDimension;
+import com.supplierplatform.revamp.model.RevampSupplierRegistryProfile;
+import com.supplierplatform.revamp.repository.RevampEvaluationDimensionRepository;
+import com.supplierplatform.revamp.repository.RevampEvaluationRepository;
+import com.supplierplatform.revamp.repository.RevampSupplierRegistryProfileRepository;
+import com.supplierplatform.user.User;
+import com.supplierplatform.user.UserRepository;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Objects;
+import java.util.UUID;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+
+@Service
+@RequiredArgsConstructor
+public class RevampEvaluationService {
+
+    private final RevampEvaluationRepository evaluationRepository;
+    private final RevampEvaluationDimensionRepository evaluationDimensionRepository;
+    private final RevampSupplierRegistryProfileRepository supplierRegistryProfileRepository;
+    private final UserRepository userRepository;
+    private final RevampEvaluationMapper evaluationMapper;
+
+    @Transactional
+    public RevampEvaluationSummaryDto submitEvaluation(
+            UUID supplierRegistryProfileId,
+            UUID evaluatorUserId,
+            String collaborationType,
+            String collaborationPeriod,
+            String referenceCode,
+            short overallScore,
+            String comment,
+            Map<String, Short> dimensions
+    ) {
+        if (evaluationRepository.findBySupplierRegistryProfileIdAndEvaluatorUserIdAndCollaborationPeriod(
+                supplierRegistryProfileId,
+                evaluatorUserId,
+                collaborationPeriod
+        ).isPresent()) {
+            throw new IllegalStateException("An evaluation already exists for this supplier/evaluator/period");
+        }
+
+        RevampSupplierRegistryProfile profile = supplierRegistryProfileRepository.findById(supplierRegistryProfileId)
+                .orElseThrow(() -> new EntityNotFoundException("RevampSupplierRegistryProfile", supplierRegistryProfileId));
+        User evaluator = userRepository.findById(evaluatorUserId)
+                .orElseThrow(() -> new EntityNotFoundException("User", evaluatorUserId));
+
+        RevampEvaluation evaluation = new RevampEvaluation();
+        evaluation.setSupplierRegistryProfile(profile);
+        evaluation.setEvaluatorUser(evaluator);
+        evaluation.setCollaborationType(collaborationType);
+        evaluation.setCollaborationPeriod(collaborationPeriod);
+        evaluation.setReferenceCode(referenceCode);
+        evaluation.setOverallScore(overallScore);
+        evaluation.setComment(comment);
+        evaluation.setIsAnnulled(false);
+
+        RevampEvaluation saved = evaluationRepository.save(evaluation);
+
+        if (dimensions != null && !dimensions.isEmpty()) {
+            for (Map.Entry<String, Short> entry : dimensions.entrySet()) {
+                RevampEvaluationDimension dimension = new RevampEvaluationDimension();
+                dimension.setEvaluation(saved);
+                dimension.setDimensionKey(entry.getKey());
+                dimension.setScore(entry.getValue());
+                evaluationDimensionRepository.save(dimension);
+            }
+        }
+
+        return evaluationMapper.toSummary(saved);
+    }
+
+    @Transactional
+    public RevampEvaluationSummaryDto annul(UUID evaluationId, UUID actorUserId) {
+        RevampEvaluation evaluation = evaluationRepository.findById(evaluationId)
+                .orElseThrow(() -> new EntityNotFoundException("RevampEvaluation", evaluationId));
+        User actor = userRepository.findById(actorUserId)
+                .orElseThrow(() -> new EntityNotFoundException("User", actorUserId));
+
+        evaluation.setIsAnnulled(true);
+        evaluation.setAnnulledByUser(actor);
+        evaluation.setAnnulledAt(LocalDateTime.now());
+        return evaluationMapper.toSummary(evaluationRepository.save(evaluation));
+    }
+
+    @Transactional(readOnly = true)
+    public List<RevampEvaluationSummaryDto> listBySupplier(UUID supplierRegistryProfileId) {
+        return evaluationRepository.findBySupplierRegistryProfileIdOrderByCreatedAtDesc(supplierRegistryProfileId).stream()
+                .map(evaluationMapper::toSummary)
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public RevampEvaluationAggregateDto summaryBySupplier(UUID supplierRegistryProfileId) {
+        List<RevampEvaluationSummaryDto> rows = listBySupplier(supplierRegistryProfileId);
+        long total = rows.size();
+        long active = rows.stream().filter(row -> !row.annulled()).count();
+        double average = rows.stream()
+                .filter(row -> !row.annulled())
+                .mapToInt(RevampEvaluationSummaryDto::overallScore)
+                .average()
+                .orElse(0.0);
+
+        return new RevampEvaluationAggregateDto(
+                supplierRegistryProfileId,
+                total,
+                active,
+                Math.round(average * 100.0) / 100.0
+        );
+    }
+
+    @Transactional(readOnly = true)
+    public RevampEvaluationOverviewDto overview(
+            String query,
+            String type,
+            String period,
+            Double minScore,
+            String evaluator,
+            int limit
+    ) {
+        List<RevampEvaluation> all = evaluationRepository.findAllByOrderByCreatedAtDesc().stream()
+                .filter(e -> !Boolean.TRUE.equals(e.getIsAnnulled()))
+                .toList();
+
+        Map<UUID, List<RevampEvaluationDimension>> dimensionsByEvaluationId = loadDimensions(all);
+        List<RevampEvaluationOverviewRowDto> rows = all.stream()
+                .map(e -> toOverviewRow(e, dimensionsByEvaluationId.getOrDefault(e.getId(), List.of())))
+                .filter(row -> filterRow(row, query, type, period, minScore, evaluator))
+                .sorted(Comparator.comparing(RevampEvaluationOverviewRowDto::createdAt).reversed())
+                .limit(Math.max(1, Math.min(500, limit)))
+                .toList();
+
+        LocalDate firstDayOfMonth = LocalDate.now().withDayOfMonth(1);
+        long currentMonthEvaluations = all.stream()
+                .filter(e -> e.getCreatedAt() != null && !e.getCreatedAt().toLocalDate().isBefore(firstDayOfMonth))
+                .count();
+        long evaluatedSuppliers = all.stream()
+                .map(e -> e.getSupplierRegistryProfile() != null ? e.getSupplierRegistryProfile().getId() : null)
+                .filter(Objects::nonNull)
+                .distinct()
+                .count();
+        double average = all.stream()
+                .mapToDouble(e -> e.getOverallScore() != null ? e.getOverallScore() : 0.0)
+                .average()
+                .orElse(0.0);
+
+        return new RevampEvaluationOverviewDto(
+                all.size(),
+                Math.round(average * 100.0) / 100.0,
+                currentMonthEvaluations,
+                evaluatedSuppliers,
+                rows
+        );
+    }
+
+    @Transactional(readOnly = true)
+    public RevampEvaluationAnalyticsDto analyticsBySupplier(UUID supplierRegistryProfileId) {
+        RevampSupplierRegistryProfile supplier = supplierRegistryProfileRepository.findById(supplierRegistryProfileId)
+                .orElseThrow(() -> new EntityNotFoundException("RevampSupplierRegistryProfile", supplierRegistryProfileId));
+
+        List<RevampEvaluation> evaluations = evaluationRepository.findBySupplierRegistryProfileIdOrderByCreatedAtDesc(supplierRegistryProfileId).stream()
+                .filter(e -> !Boolean.TRUE.equals(e.getIsAnnulled()))
+                .toList();
+
+        Map<UUID, List<RevampEvaluationDimension>> dimensionsByEvaluationId = loadDimensions(evaluations);
+        List<RevampEvaluationHistoryItemDto> history = new ArrayList<>();
+        Map<String, List<Double>> dimensionScoreAccumulator = new java.util.LinkedHashMap<>();
+        Map<Integer, Long> distribution = new java.util.LinkedHashMap<>();
+        for (int score = 5; score >= 1; score -= 1) {
+            distribution.put(score, 0L);
+        }
+
+        for (RevampEvaluation evaluation : evaluations) {
+            List<RevampEvaluationDimension> dimensions = dimensionsByEvaluationId.getOrDefault(evaluation.getId(), List.of());
+            Map<String, Double> dimensionScores = dimensions.stream()
+                    .collect(Collectors.toMap(
+                            d -> normalizeDimensionKey(d.getDimensionKey()),
+                            d -> round2(d.getScore() != null ? d.getScore() : 0.0),
+                            (a, b) -> b,
+                            java.util.LinkedHashMap::new
+                    ));
+
+            dimensionScores.forEach((key, value) -> dimensionScoreAccumulator.computeIfAbsent(key, ignored -> new ArrayList<>()).add(value));
+
+            int scoreBucket = evaluation.getOverallScore() != null ? evaluation.getOverallScore() : 0;
+            if (distribution.containsKey(scoreBucket)) {
+                distribution.put(scoreBucket, distribution.get(scoreBucket) + 1);
+            }
+
+            history.add(new RevampEvaluationHistoryItemDto(
+                    evaluation.getId(),
+                    evaluation.getCreatedAt(),
+                    evaluation.getCollaborationType(),
+                    evaluation.getCollaborationPeriod(),
+                    evaluation.getReferenceCode(),
+                    evaluation.getComment(),
+                    round2(calculateAverageScore(evaluation, dimensions)),
+                    dimensionScores,
+                    anonymizeEvaluator(evaluation.getEvaluatorUser() != null ? evaluation.getEvaluatorUser().getFullName() : null)
+            ));
+        }
+
+        Map<String, Double> dimensionAverages = dimensionScoreAccumulator.entrySet().stream()
+                .collect(Collectors.toMap(
+                        Map.Entry::getKey,
+                        e -> round2(e.getValue().stream().mapToDouble(Double::doubleValue).average().orElse(0.0)),
+                        (a, b) -> b,
+                        java.util.LinkedHashMap::new
+                ));
+
+        double overallAverage = evaluations.stream()
+                .mapToDouble(e -> e.getOverallScore() != null ? e.getOverallScore() : 0.0)
+                .average()
+                .orElse(0.0);
+
+        return new RevampEvaluationAnalyticsDto(
+                supplierRegistryProfileId,
+                supplier.getDisplayName(),
+                supplier.getRegistryType() != null ? supplier.getRegistryType().name() : null,
+                evaluations.size(),
+                round2(overallAverage),
+                dimensionAverages,
+                distribution,
+                history
+        );
+    }
+
+    private Map<UUID, List<RevampEvaluationDimension>> loadDimensions(List<RevampEvaluation> evaluations) {
+        List<UUID> evaluationIds = evaluations.stream().map(RevampEvaluation::getId).filter(Objects::nonNull).toList();
+        if (evaluationIds.isEmpty()) {
+            return Map.of();
+        }
+        return evaluationDimensionRepository.findByEvaluationIdIn(evaluationIds).stream()
+                .filter(d -> d.getEvaluation() != null && d.getEvaluation().getId() != null)
+                .collect(Collectors.groupingBy(
+                        d -> d.getEvaluation().getId(),
+                        Collectors.mapping(Function.identity(), Collectors.toList())
+                ));
+    }
+
+    private RevampEvaluationOverviewRowDto toOverviewRow(RevampEvaluation evaluation, List<RevampEvaluationDimension> dimensions) {
+        Map<String, Double> dimensionScores = dimensions.stream()
+                .collect(Collectors.toMap(
+                        d -> normalizeDimensionKey(d.getDimensionKey()),
+                        d -> round2(d.getScore() != null ? d.getScore() : 0.0),
+                        (a, b) -> b,
+                        java.util.LinkedHashMap::new
+                ));
+
+        String supplierType = evaluation.getSupplierRegistryProfile() != null && evaluation.getSupplierRegistryProfile().getRegistryType() != null
+                ? evaluation.getSupplierRegistryProfile().getRegistryType().name()
+                : null;
+        String evaluatorDisplay = evaluation.getEvaluatorUser() != null ? evaluation.getEvaluatorUser().getFullName() : null;
+
+        return new RevampEvaluationOverviewRowDto(
+                evaluation.getId(),
+                evaluation.getSupplierRegistryProfile() != null ? evaluation.getSupplierRegistryProfile().getId() : null,
+                evaluation.getSupplierRegistryProfile() != null ? evaluation.getSupplierRegistryProfile().getDisplayName() : null,
+                supplierType,
+                evaluation.getCreatedAt(),
+                evaluation.getCollaborationType(),
+                evaluation.getCollaborationPeriod(),
+                evaluation.getReferenceCode(),
+                evaluation.getComment(),
+                evaluatorDisplay,
+                round2(calculateAverageScore(evaluation, dimensions)),
+                dimensionScores
+        );
+    }
+
+    private boolean filterRow(
+            RevampEvaluationOverviewRowDto row,
+            String query,
+            String type,
+            String period,
+            Double minScore,
+            String evaluator
+    ) {
+        if (query != null && !query.isBlank()) {
+            String q = query.toLowerCase(Locale.ROOT).trim();
+            String haystack = String.join(" ",
+                    row.supplierName() != null ? row.supplierName() : "",
+                    row.comment() != null ? row.comment() : "",
+                    row.referenceCode() != null ? row.referenceCode() : ""
+            ).toLowerCase(Locale.ROOT);
+            if (!haystack.contains(q)) {
+                return false;
+            }
+        }
+
+        if (type != null && !type.isBlank() && !"ALL".equalsIgnoreCase(type)) {
+            String normalized = type.toUpperCase(Locale.ROOT);
+            if (!normalized.equalsIgnoreCase(row.supplierType())) {
+                return false;
+            }
+        }
+
+        if (period != null && !period.isBlank()) {
+            if (row.collaborationPeriod() == null || !row.collaborationPeriod().toLowerCase(Locale.ROOT).contains(period.toLowerCase(Locale.ROOT))) {
+                return false;
+            }
+        }
+
+        if (minScore != null && row.averageScore() < minScore) {
+            return false;
+        }
+
+        if (evaluator != null && !evaluator.isBlank() && !"ALL".equalsIgnoreCase(evaluator)) {
+            String normalized = evaluator.toLowerCase(Locale.ROOT);
+            String display = row.evaluatorDisplay() != null ? row.evaluatorDisplay().toLowerCase(Locale.ROOT) : "";
+            if (!display.contains(normalized)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private double calculateAverageScore(RevampEvaluation evaluation, List<RevampEvaluationDimension> dimensions) {
+        if (dimensions == null || dimensions.isEmpty()) {
+            return evaluation.getOverallScore() != null ? evaluation.getOverallScore() : 0.0;
+        }
+        return dimensions.stream()
+                .mapToDouble(d -> d.getScore() != null ? d.getScore() : 0.0)
+                .average()
+                .orElse(evaluation.getOverallScore() != null ? evaluation.getOverallScore() : 0.0);
+    }
+
+    private double round2(double value) {
+        return Math.round(value * 100.0) / 100.0;
+    }
+
+    private String normalizeDimensionKey(String key) {
+        if (key == null || key.isBlank()) return "Altro";
+        String normalized = key.trim().toLowerCase(Locale.ROOT);
+        return switch (normalized) {
+            case "quality", "qualita", "qualita_tecnica", "technical_quality" -> "Qualita tecnica";
+            case "timeliness", "rispetto_tempi", "delivery_time", "tempi" -> "Rispetto tempi";
+            case "communication", "comunicazione" -> "Comunicazione";
+            case "flexibility", "flessibilita", "problem_solving" -> "Flessibilita";
+            case "value", "qualita_prezzo", "price_quality" -> "Qualita/Prezzo";
+            default -> key;
+        };
+    }
+
+    private String anonymizeEvaluator(String fullName) {
+        if (fullName == null || fullName.isBlank()) {
+            return "Valutatore anonimo";
+        }
+        String[] parts = fullName.trim().split("\\s+");
+        if (parts.length >= 2) {
+            return "Val. " + parts[0] + " " + parts[1].charAt(0) + ".";
+        }
+        return "Val. " + parts[0] + ".";
+    }
+}
