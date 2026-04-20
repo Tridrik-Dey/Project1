@@ -16,6 +16,7 @@ import com.supplierplatform.user.User;
 import com.supplierplatform.user.UserRole;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
@@ -25,6 +26,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.Comparator;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -130,32 +132,62 @@ public class RevampSupplierProfileService {
         String normalizedRegion = normalizeFilter(region);
         String normalizedServiceCategory = normalizeFilter(serviceCategory);
         String normalizedCertification = normalizeFilter(certification);
-        Page<RevampSupplierRegistryProfile> page = profileRepository.searchAdminProfiles(
-                registryType,
-                effectiveStatus,
-                normalizedQuery,
-                normalizedAteco,
-                normalizedRegion,
-                normalizedServiceCategory,
-                normalizedCertification,
-                pageable
-        );
-        Set<UUID> profileIds = page.getContent().stream()
+
+        List<RevampSupplierRegistryProfile> allProfiles = profileRepository.findAll();
+        Set<UUID> allProfileIds = allProfiles.stream()
                 .map(RevampSupplierRegistryProfile::getId)
                 .collect(Collectors.toSet());
-        Map<UUID, RevampSupplierRegistryProfileDetail> detailByProfileId = profileIds.isEmpty()
+        Map<UUID, RevampSupplierRegistryProfileDetail> detailByProfileId = allProfileIds.isEmpty()
                 ? Map.of()
-                : profileDetailRepository.findByProfileIdIn(profileIds).stream()
+                : profileDetailRepository.findByProfileIdIn(allProfileIds).stream()
+                .filter(detail -> detail.getProfile() != null && detail.getProfile().getId() != null)
                 .collect(Collectors.toMap(
                         detail -> detail.getProfile().getId(),
                         Function.identity(),
                         (a, b) -> b
                 ));
-        return page.map(profile -> toDto(profile, detailByProfileId.get(profile.getId())));
+
+        List<RevampSupplierRegistryProfile> filtered = allProfiles.stream()
+                .filter(profile -> registryType == null || profile.getRegistryType() == registryType)
+                .filter(profile -> effectiveStatus == null || profile.getStatus() == effectiveStatus)
+                .filter(profile -> {
+                    if (normalizedQuery == null) return true;
+                    return containsIgnoreCase(profile.getDisplayName(), normalizedQuery)
+                            || containsIgnoreCase(profile.getPublicSummary(), normalizedQuery)
+                            || containsIgnoreCase(profile.getSupplierUser() != null ? profile.getSupplierUser().getFullName() : null, normalizedQuery)
+                            || containsIgnoreCase(profile.getSupplierUser() != null ? profile.getSupplierUser().getEmail() : null, normalizedQuery);
+                })
+                .filter(profile -> {
+                    RevampSupplierRegistryProfileDetail detail = detailByProfileId.get(profile.getId());
+                    if (normalizedAteco != null && !containsIgnoreCase(detail != null ? detail.getSearchAtecoPrimary() : null, normalizedAteco)) return false;
+                    if (normalizedRegion != null && !containsIgnoreCase(detail != null ? detail.getSearchRegionsCsv() : null, normalizedRegion)) return false;
+                    if (normalizedServiceCategory != null && !containsIgnoreCase(detail != null ? detail.getSearchServiceCategoriesCsv() : null, normalizedServiceCategory)) return false;
+                    if (normalizedCertification != null && !containsIgnoreCase(detail != null ? detail.getSearchCertificationsCsv() : null, normalizedCertification)) return false;
+                    return true;
+                })
+                .sorted(Comparator.comparing(RevampSupplierRegistryProfile::getUpdatedAt, Comparator.nullsLast(Comparator.reverseOrder())))
+                .toList();
+
+        int pageSize = pageable.getPageSize();
+        int pageNumber = pageable.getPageNumber();
+        int fromIndex = Math.min(pageNumber * pageSize, filtered.size());
+        int toIndex = Math.min(fromIndex + pageSize, filtered.size());
+        List<RevampSupplierRegistryProfile> content = filtered.subList(fromIndex, toIndex);
+        List<RevampSupplierProfileDto> dtoContent = content.stream()
+                .map(profile -> toDto(profile, detailByProfileId.get(profile.getId())))
+                .toList();
+
+        return new PageImpl<>(dtoContent, pageable, filtered.size());
     }
 
     private String normalizeFilter(String value) {
         return value != null && !value.isBlank() ? value.trim() : null;
+    }
+
+    private boolean containsIgnoreCase(String source, String needle) {
+        if (needle == null) return true;
+        if (source == null) return false;
+        return source.toLowerCase().contains(needle.toLowerCase());
     }
 
     private RevampSupplierRegistryProfile getProfileEntity(UUID profileId) {

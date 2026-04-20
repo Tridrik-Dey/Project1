@@ -21,7 +21,7 @@ type DecisionAction = "APPROVED" | "INTEGRATION_REQUIRED" | "REJECTED";
 type SectionPayload = Record<string, unknown>;
 type DocumentRow = { id: string; label: string; sectionLabel: string; url: string | null; hasLink: boolean };
 
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function daysSince(iso: string | null): number | null {
   if (!iso) return null;
@@ -127,24 +127,36 @@ export function AdminApplicationCasePage() {
     if (!token || !validAppId) return;
     setLoading(true);
     try {
-      const [summaryData, sectionsData, historyData] = await Promise.all([
-        getRevampApplicationSummary(appId, token),
+      const summaryData = await getRevampApplicationSummary(appId, token);
+      setSummary(summaryData);
+
+      const [sectionsResult, historyResult] = await Promise.allSettled([
         getRevampApplicationSections(appId, token),
         getAdminReviewHistory(appId, token)
       ]);
-      const sortedHistory = [...historyData].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
-      setSummary(summaryData);
-      setSections(sectionsData);
-      setReviewHistory(sortedHistory);
-      const latestCaseId = sortedHistory[0]?.id;
-      if (latestCaseId) {
-        try {
-          const latestIntegration = await getLatestAdminIntegrationRequest(latestCaseId, token);
-          setLatestIntegrationRequest(latestIntegration);
-        } catch {
+
+      if (sectionsResult.status === "fulfilled") {
+        setSections(sectionsResult.value);
+      } else {
+        setSections([]);
+      }
+
+      if (historyResult.status === "fulfilled") {
+        const sortedHistory = [...historyResult.value].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+        setReviewHistory(sortedHistory);
+        const latestCaseId = sortedHistory[0]?.id;
+        if (latestCaseId) {
+          try {
+            const latestIntegration = await getLatestAdminIntegrationRequest(latestCaseId, token);
+            setLatestIntegrationRequest(latestIntegration);
+          } catch {
+            setLatestIntegrationRequest(null);
+          }
+        } else {
           setLatestIntegrationRequest(null);
         }
       } else {
+        setReviewHistory([]);
         setLatestIntegrationRequest(null);
       }
     } catch (error) {

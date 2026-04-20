@@ -2910,9 +2910,27 @@ body {
 }
 
 .home-btn-secondary {
-  color: #f2f8ff;
-  background: rgba(255, 255, 255, 0.12);
-  border-color: rgba(208, 231, 252, 0.58);
+  color: #1f4f7d;
+  background: #f6fbff;
+  border-color: #a9c8e4;
+  box-shadow: 0 8px 18px -16px rgba(16, 60, 103, 0.72);
+}
+
+.home-btn-secondary:hover {
+  color: #143f67;
+  background: #ebf5ff;
+  border-color: #86afd2;
+}
+
+.home-btn-secondary:disabled,
+.home-btn-secondary[aria-disabled="true"] {
+  color: #7b97b3;
+  background: #f2f7fc;
+  border-color: #c9dcec;
+  opacity: 0.9;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
 }
 
 .home-section-head h3,

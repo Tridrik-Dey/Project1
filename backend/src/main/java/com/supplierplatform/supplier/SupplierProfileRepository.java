@@ -17,6 +17,7 @@ import java.time.LocalDateTime;
 public interface SupplierProfileRepository extends JpaRepository<SupplierProfile, UUID>, JpaSpecificationExecutor<SupplierProfile> {
 
     Optional<SupplierProfile> findByUserId(UUID userId);
+    List<SupplierProfile> findByUser_IdIn(List<UUID> userIds);
 
     List<SupplierProfile> findByStatus(SupplierStatus status);
 

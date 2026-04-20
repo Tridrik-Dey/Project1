@@ -20,8 +20,6 @@ public interface RevampSupplierRegistryProfileRepository extends JpaRepository<R
 
     @Query("""
             select p from RevampSupplierRegistryProfile p
-            left join RevampSupplierRegistryProfileDetail d
-              on d.profile.id = p.id
             where (:registryType is null or p.registryType = :registryType)
               and (:status is null or p.status = :status)
               and (
@@ -33,19 +31,35 @@ public interface RevampSupplierRegistryProfileRepository extends JpaRepository<R
               )
               and (
                 :ateco is null
-                or lower(coalesce(d.searchAtecoPrimary, '')) like lower(concat('%', :ateco, '%'))
+                or exists (
+                  select 1 from RevampSupplierRegistryProfileDetail d
+                  where d.profile.id = p.id
+                    and lower(coalesce(d.searchAtecoPrimary, '')) like lower(concat('%', :ateco, '%'))
+                )
               )
               and (
                 :region is null
-                or lower(coalesce(d.searchRegionsCsv, '')) like lower(concat('%', :region, '%'))
+                or exists (
+                  select 1 from RevampSupplierRegistryProfileDetail d
+                  where d.profile.id = p.id
+                    and lower(coalesce(d.searchRegionsCsv, '')) like lower(concat('%', :region, '%'))
+                )
               )
               and (
                 :serviceCategory is null
-                or lower(coalesce(d.searchServiceCategoriesCsv, '')) like lower(concat('%', :serviceCategory, '%'))
+                or exists (
+                  select 1 from RevampSupplierRegistryProfileDetail d
+                  where d.profile.id = p.id
+                    and lower(coalesce(d.searchServiceCategoriesCsv, '')) like lower(concat('%', :serviceCategory, '%'))
+                )
               )
               and (
                 :certification is null
-                or lower(coalesce(d.searchCertificationsCsv, '')) like lower(concat('%', :certification, '%'))
+                or exists (
+                  select 1 from RevampSupplierRegistryProfileDetail d
+                  where d.profile.id = p.id
+                    and lower(coalesce(d.searchCertificationsCsv, '')) like lower(concat('%', :certification, '%'))
+                )
               )
             """)
     Page<RevampSupplierRegistryProfile> searchAdminProfiles(

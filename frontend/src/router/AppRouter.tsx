@@ -75,6 +75,7 @@ function RequireAdminGovernanceRoles({
 
 export function AppRouter() {
   const { auth } = useAuth();
+  const authenticatedHome = auth ? (auth.role === "SUPPLIER" ? "/supplier/dashboard" : "/admin/dashboard") : "/";
 
   return (
     <AppLayout>
@@ -89,7 +90,7 @@ export function AppRouter() {
         <Routes>
           <Route path="/" element={<HomePage />} />
           <Route path="/privacy" element={<PrivacyPolicyPage />} />
-          <Route path="/login" element={<LoginPage />} />
+          <Route path="/login" element={auth ? <Navigate to={authenticatedHome} replace /> : <LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
           <Route path="/activate-account" element={<AcceptAdminInvitePage />} />
           <Route path="/accept-admin-invite" element={<AcceptAdminInvitePage />} />
@@ -444,7 +445,7 @@ export function AppRouter() {
               </RequireAuth>
             }
           />
-          <Route path="*" element={<Navigate to={auth ? (auth.role === "SUPPLIER" ? "/supplier/dashboard" : "/admin/dashboard") : "/"} replace />} />
+          <Route path="*" element={<Navigate to={authenticatedHome} replace />} />
         </Routes>
       </Suspense>
     </AppLayout>

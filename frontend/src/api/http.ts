@@ -76,8 +76,11 @@ export async function apiBinaryRequest(
 
   const contentDisposition = response.headers.get("content-disposition") ?? "";
   const match = /filename=\"?([^\";]+)\"?/i.exec(contentDisposition);
-  const filename = match?.[1] ?? "download.bin";
   const blob = await response.blob();
+  const fallbackName = blob.type.includes("spreadsheetml") ? "download.xlsx"
+    : blob.type.includes("text/csv") ? "download.csv"
+      : "download.bin";
+  const filename = match?.[1] ?? fallbackName;
 
   return { blob, filename };
 }

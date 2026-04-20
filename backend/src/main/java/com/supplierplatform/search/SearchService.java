@@ -35,6 +35,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
@@ -98,6 +99,31 @@ public class SearchService {
                 org.springframework.data.domain.Sort.by("createdAt").descending()
         );
         List<SupplierProfile> rows = supplierProfileRepository.findAll(spec, pageable).getContent();
+
+        try (XSSFWorkbook workbook = new XSSFWorkbook(); ByteArrayOutputStream bos = new ByteArrayOutputStream()) {
+            writeSuppliersSheet(workbook, rows, resolvedFields);
+            writeContactsSheet(workbook, rows);
+            writeCategoriesSheet(workbook, rows);
+            writeDocumentsSheet(workbook, rows);
+            writeReviewsSheet(workbook, rows);
+            writeStatusHistorySheet(workbook, rows);
+
+            workbook.write(bos);
+            return bos.toByteArray();
+        } catch (IOException ex) {
+            throw new IllegalStateException("Failed to generate Excel export", ex);
+        }
+    }
+
+    @Transactional(readOnly = true)
+    public byte[] exportSuppliersByUserIdsToExcel(List<UUID> supplierUserIds) {
+        List<SupplierProfile> rows = (supplierUserIds == null || supplierUserIds.isEmpty())
+                ? List.of()
+                : supplierProfileRepository.findByUser_IdIn(supplierUserIds)
+                        .stream()
+                        .sorted((a, b) -> b.getCreatedAt().compareTo(a.getCreatedAt()))
+                        .toList();
+        List<SearchFieldPolicy> resolvedFields = searchScopePolicy.getAllowedFields(UserRole.ADMIN);
 
         try (XSSFWorkbook workbook = new XSSFWorkbook(); ByteArrayOutputStream bos = new ByteArrayOutputStream()) {
             writeSuppliersSheet(workbook, rows, resolvedFields);
