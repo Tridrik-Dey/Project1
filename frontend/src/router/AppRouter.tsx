@@ -93,7 +93,6 @@ export function AppRouter() {
           <Route path="/login" element={auth ? <Navigate to={authenticatedHome} replace /> : <LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
           <Route path="/activate-account" element={<AcceptAdminInvitePage />} />
-          <Route path="/accept-admin-invite" element={<AcceptAdminInvitePage />} />
           {featureFlags.newWizardAb ? (
             <Route
               path="/verify-otp"

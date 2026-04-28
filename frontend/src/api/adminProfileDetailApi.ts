@@ -1,4 +1,3 @@
-import { resolveApiPath } from "./pathResolver";
 import { apiRequest } from "./http";
 import type { AdminRegistryProfileRow } from "./adminProfilesApi";
 
@@ -28,33 +27,25 @@ export interface AdminNotificationEvent {
   sentAt: string | null;
 }
 
-function profilesBasePath(): string {
-  return resolveApiPath({
-    feature: "adminV2",
-    legacyPath: "/api/profiles",
-    revampPath: "/api/v2/profiles"
-  });
+export interface ComposeEmailPayload {
+  subject: string;
+  body: string;
 }
 
-function notificationsBasePath(): string {
-  return resolveApiPath({
-    feature: "adminV2",
-    legacyPath: "/api/notifications",
-    revampPath: "/api/v2/notifications"
-  });
-}
+const PROFILES_BASE = "/api/v2/profiles";
+const NOTIFICATIONS_BASE = "/api/v2/notifications";
 
 export function getAdminProfile(profileId: string, token: string): Promise<AdminRegistryProfileRow> {
-  return apiRequest<AdminRegistryProfileRow>(`${profilesBasePath()}/${encodeURIComponent(profileId)}`, {}, token);
+  return apiRequest<AdminRegistryProfileRow>(`${PROFILES_BASE}/${encodeURIComponent(profileId)}`, {}, token);
 }
 
 export function getAdminProfileTimeline(profileId: string, token: string): Promise<AdminProfileTimelineEvent[]> {
-  return apiRequest<AdminProfileTimelineEvent[]>(`${profilesBasePath()}/${encodeURIComponent(profileId)}/timeline`, {}, token);
+  return apiRequest<AdminProfileTimelineEvent[]>(`${PROFILES_BASE}/${encodeURIComponent(profileId)}/timeline`, {}, token);
 }
 
 export function suspendAdminProfile(profileId: string, token: string): Promise<AdminRegistryProfileRow> {
   return apiRequest<AdminRegistryProfileRow>(
-    `${profilesBasePath()}/${encodeURIComponent(profileId)}/suspend`,
+    `${PROFILES_BASE}/${encodeURIComponent(profileId)}/suspend`,
     { method: "POST" },
     token
   );
@@ -62,8 +53,16 @@ export function suspendAdminProfile(profileId: string, token: string): Promise<A
 
 export function reactivateAdminProfile(profileId: string, token: string): Promise<AdminRegistryProfileRow> {
   return apiRequest<AdminRegistryProfileRow>(
-    `${profilesBasePath()}/${encodeURIComponent(profileId)}/reactivate`,
+    `${PROFILES_BASE}/${encodeURIComponent(profileId)}/reactivate`,
     { method: "POST" },
+    token
+  );
+}
+
+export function composeAdminEmail(profileId: string, payload: ComposeEmailPayload, token: string): Promise<void> {
+  return apiRequest<void>(
+    `${PROFILES_BASE}/${encodeURIComponent(profileId)}/compose-email`,
+    { method: "POST", body: JSON.stringify(payload) },
     token
   );
 }
@@ -74,7 +73,7 @@ export function getAdminProfileNotifications(profileId: string, token: string): 
     entityId: profileId
   }).toString();
   return apiRequest<AdminNotificationEvent[]>(
-    `${notificationsBasePath()}/events?${query}`,
+    `${NOTIFICATIONS_BASE}/events?${query}`,
     {},
     token
   );

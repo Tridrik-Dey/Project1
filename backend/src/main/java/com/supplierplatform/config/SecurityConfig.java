@@ -44,7 +44,7 @@ public class SecurityConfig {
                         .sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/api/v2/auth/login", "/api/v2/auth/register", "/api/v2/auth/accept-invite").permitAll()
-                        .requestMatchers("/api/v2/invites/token/**", "/api/invites/token/**").permitAll()
+                        .requestMatchers("/api/v2/invites/token/**").permitAll()
                         .requestMatchers("/api/ops/**").permitAll()
                         .requestMatchers("/api/support/contact").permitAll()
                         .anyRequest().authenticated()

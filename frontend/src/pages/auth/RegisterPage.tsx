@@ -26,6 +26,7 @@ export function RegisterPage() {
   const emailInputRef = useRef<HTMLInputElement | null>(null);
   const inviteTokenFromQuery = searchParams.get("inviteToken")?.trim();
   const inviteIdFromQuery = searchParams.get("inviteId")?.trim();
+  const invitedNameFromQuery = searchParams.get("invitedName")?.trim();
   const invitedEmailFromQuery = searchParams.get("invitedEmail")?.trim();
   const sourceChannelFromQuery = searchParams.get("sourceChannel")?.trim().toUpperCase();
   const registryTypeFromQuery = searchParams.get("registryType")?.trim().toUpperCase();
@@ -52,14 +53,20 @@ export function RegisterPage() {
       sourceChannel,
       inviteToken: inviteTokenFromQuery || undefined,
       inviteId: inviteIdFromQuery || undefined,
+      invitedName: invitedNameFromQuery || undefined,
       invitedEmail: invitedEmailFromQuery || undefined
     });
-  }, [inviteIdFromQuery, inviteTokenFromQuery, invitedEmailFromQuery, registryTypeFromQuery, sourceChannelFromQuery]);
+  }, [inviteIdFromQuery, inviteTokenFromQuery, invitedEmailFromQuery, invitedNameFromQuery, registryTypeFromQuery, sourceChannelFromQuery]);
 
   useEffect(() => {
     if (!inviteEmailLocked || !invitedEmailFromQuery) return;
     setEmail(invitedEmailFromQuery);
   }, [inviteEmailLocked, invitedEmailFromQuery]);
+
+  useEffect(() => {
+    if (!inviteEmailLocked || !invitedNameFromQuery) return;
+    setFullName((current) => current.trim() ? current : invitedNameFromQuery);
+  }, [inviteEmailLocked, invitedNameFromQuery]);
 
   function mapRegisterErrorMessage(rawMessage: string): string | null {
     const message = rawMessage.toLowerCase();

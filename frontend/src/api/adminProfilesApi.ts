@@ -1,6 +1,5 @@
 import type { PageResponse } from "../types/api";
 import { apiRequest } from "./http";
-import { resolveApiPath } from "./pathResolver";
 
 export type RegistryType = "ALBO_A" | "ALBO_B";
 export type RegistryProfileStatus = "APPROVED" | "SUSPENDED" | "RENEWAL_DUE" | "ARCHIVED";
@@ -9,6 +8,7 @@ export interface AdminRegistryProfileRow {
   id: string;
   applicationId: string | null;
   supplierUserId: string | null;
+  supplierEmail: string | null;
   registryType: RegistryType;
   status: RegistryProfileStatus;
   displayName: string | null;
@@ -35,13 +35,7 @@ interface ListAdminProfilesParams {
   size?: number;
 }
 
-function profilesBasePath(): string {
-  return resolveApiPath({
-    feature: "adminV2",
-    legacyPath: "/api/profiles",
-    revampPath: "/api/v2/profiles"
-  });
-}
+const BASE = "/api/v2/profiles";
 
 export function listAdminProfiles(
   token: string,
@@ -58,6 +52,6 @@ export function listAdminProfiles(
   if (params.page !== undefined) search.set("page", String(params.page));
   if (params.size !== undefined) search.set("size", String(params.size));
   const query = search.toString();
-  const path = query ? `${profilesBasePath()}?${query}` : profilesBasePath();
+  const path = query ? `${BASE}?${query}` : BASE;
   return apiRequest<PageResponse<AdminRegistryProfileRow>>(path, {}, token);
 }

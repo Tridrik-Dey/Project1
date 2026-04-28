@@ -90,35 +90,5 @@ class RevampAuditControllerContractTest {
                 .andExpect(jsonPath("$.data[0].entityType").value("REVAMP_APPLICATION"));
     }
 
-    @Test
-    void eventsAliasPathReturnsExpectedContract() throws Exception {
-        UUID entityId = UUID.randomUUID();
-        UUID eventId = UUID.randomUUID();
-        when(auditService.listEvents(eq("REVAMP_APPLICATION"), eq(entityId), eq("req-1")))
-                .thenReturn(List.of(new RevampAuditEventSummaryDto(
-                        eventId,
-                        "revamp.application.submitted",
-                        "REVAMP_APPLICATION",
-                        entityId,
-                        UUID.randomUUID(),
-                        "SUPPLIER",
-                        "req-1",
-                        null,
-                        "{\"status\":\"DRAFT\"}",
-                        "{\"status\":\"SUBMITTED\"}",
-                        "{}",
-                        LocalDateTime.now()
-                )));
-
-        mockMvc.perform(get("/api/audit/events")
-                        .param("entityType", "REVAMP_APPLICATION")
-                        .param("entityId", entityId.toString())
-                        .param("requestId", "req-1"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.success").value(true))
-                .andExpect(jsonPath("$.data[0].id").value(eventId.toString()))
-                .andExpect(jsonPath("$.data[0].requestId").value("req-1"))
-                .andExpect(jsonPath("$.data[0].entityType").value("REVAMP_APPLICATION"));
-    }
 }
 

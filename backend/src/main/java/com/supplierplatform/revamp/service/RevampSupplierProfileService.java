@@ -1,6 +1,7 @@
 package com.supplierplatform.revamp.service;
 
 import com.supplierplatform.common.EntityNotFoundException;
+import com.supplierplatform.revamp.dto.ComposeEmailRequest;
 import com.supplierplatform.revamp.dto.RevampAuditEventInputDto;
 import com.supplierplatform.revamp.dto.RevampAuditEventSummaryDto;
 import com.supplierplatform.revamp.dto.RevampSupplierProfileDto;
@@ -8,6 +9,7 @@ import com.supplierplatform.revamp.dto.RevampSupplierProfileTimelineEventDto;
 import com.supplierplatform.revamp.enums.AdminRole;
 import com.supplierplatform.revamp.enums.RegistryProfileStatus;
 import com.supplierplatform.revamp.enums.RegistryType;
+import com.supplierplatform.revamp.model.RevampNotificationEvent;
 import com.supplierplatform.revamp.model.RevampSupplierRegistryProfile;
 import com.supplierplatform.revamp.model.RevampSupplierRegistryProfileDetail;
 import com.supplierplatform.revamp.repository.RevampSupplierRegistryProfileDetailRepository;
@@ -15,9 +17,12 @@ import com.supplierplatform.revamp.repository.RevampSupplierRegistryProfileRepos
 import com.supplierplatform.user.User;
 import com.supplierplatform.user.UserRole;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
+import org.springframework.mail.SimpleMailMessage;
+import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -39,6 +44,11 @@ public class RevampSupplierProfileService {
     private final RevampSupplierRegistryProfileRepository profileRepository;
     private final RevampSupplierRegistryProfileDetailRepository profileDetailRepository;
     private final RevampAuditService auditService;
+    private final JavaMailSender mailSender;
+    private final RevampNotificationEventService notificationEventService;
+
+    @Value("${app.reviews.status-mail.from:${spring.mail.username:no-reply@supplierplatform.local}}")
+    private String fromAddress;
 
     @Transactional(readOnly = true)
     public RevampSupplierProfileDto getProfile(UUID profileId, User currentUser) {
@@ -180,6 +190,37 @@ public class RevampSupplierProfileService {
         return new PageImpl<>(dtoContent, pageable, filtered.size());
     }
 
+    public void composeEmail(UUID profileId, ComposeEmailRequest request, User actor) {
+        RevampSupplierRegistryProfile profile = getProfileEntity(profileId);
+        if (profile.getSupplierUser() == null || profile.getSupplierUser().getEmail() == null) {
+            throw new IllegalStateException("Supplier has no email address on record");
+        }
+        String to = profile.getSupplierUser().getEmail();
+
+        RevampNotificationEvent event = notificationEventService.createPending(
+                "admin.compose-email",
+                ENTITY_TYPE,
+                profileId,
+                to,
+                null,
+                null,
+                "{\"subject\":\"" + request.subject().replace("\"", "\\\"") + "\"}"
+        );
+
+        try {
+            SimpleMailMessage message = new SimpleMailMessage();
+            message.setFrom(fromAddress);
+            message.setTo(to);
+            message.setSubject(request.subject());
+            message.setText(request.body());
+            mailSender.send(message);
+            notificationEventService.markSent(event.getId(), null);
+        } catch (Exception ex) {
+            notificationEventService.markFailed(event.getId());
+            throw new IllegalStateException("Failed to send email: " + ex.getMessage(), ex);
+        }
+    }
+
     private String normalizeFilter(String value) {
         return value != null && !value.isBlank() ? value.trim() : null;
     }
@@ -244,6 +285,7 @@ public class RevampSupplierProfileService {
                 profile.getId(),
                 profile.getApplication() != null ? profile.getApplication().getId() : null,
                 profile.getSupplierUser() != null ? profile.getSupplierUser().getId() : null,
+                profile.getSupplierUser() != null ? profile.getSupplierUser().getEmail() : null,
                 profile.getRegistryType(),
                 profile.getStatus(),
                 profile.getDisplayName(),

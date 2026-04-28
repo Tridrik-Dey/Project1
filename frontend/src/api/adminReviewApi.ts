@@ -1,5 +1,4 @@
 import { apiRequest } from "./http";
-import { resolveApiPath } from "./pathResolver";
 
 export interface AdminReviewCaseSummary {
   id: string;
@@ -10,6 +9,16 @@ export interface AdminReviewCaseSummary {
   assignedToDisplayName?: string | null;
   assignedAt?: string | null;
   slaDueAt?: string | null;
+  verifiedByUserId?: string | null;
+  verifiedByDisplayName?: string | null;
+  verifiedAt?: string | null;
+  verificationNote?: string | null;
+  verificationOutcome?: "COMPLIANT" | "COMPLIANT_WITH_RESERVATIONS" | "INCOMPLETE" | "NON_COMPLIANT" | null;
+  decidedByUserId?: string | null;
+  decidedByDisplayName?: string | null;
+  decidedAt?: string | null;
+  latestIntegrationRequestStatus?: string | null;
+  latestIntegrationSupplierRespondedAt?: string | null;
   updatedAt: string;
 }
 
@@ -23,26 +32,22 @@ export interface AdminIntegrationRequestSummary {
   updatedAt: string;
 }
 
+const BASE = "/api/v2/reviews";
+
 export function getAdminReviewQueue(token: string): Promise<AdminReviewCaseSummary[]> {
-  const basePath = resolveApiPath({
-    feature: "adminV2",
-    legacyPath: "/api/reviews",
-    revampPath: "/api/v2/reviews"
-  });
-  return apiRequest<AdminReviewCaseSummary[]>(`${basePath}/queue`, {}, token);
+  return apiRequest<AdminReviewCaseSummary[]>(`${BASE}/queue`, {}, token);
+}
+
+export function getAdminDecidedQueue(token: string): Promise<AdminReviewCaseSummary[]> {
+  return apiRequest<AdminReviewCaseSummary[]>(`${BASE}/decided`, {}, token);
 }
 
 export function getAdminReviewHistory(
   applicationId: string,
   token: string
 ): Promise<AdminReviewCaseSummary[]> {
-  const basePath = resolveApiPath({
-    feature: "adminV2",
-    legacyPath: "/api/reviews",
-    revampPath: "/api/v2/reviews"
-  });
   return apiRequest<AdminReviewCaseSummary[]>(
-    `${basePath}/${encodeURIComponent(applicationId)}/history`,
+    `${BASE}/${encodeURIComponent(applicationId)}/history`,
     {},
     token
   );
@@ -53,13 +58,8 @@ export function assignAdminReviewCase(
   token: string,
   payload?: { assignedToUserId?: string; slaDueAt?: string }
 ): Promise<AdminReviewCaseSummary> {
-  const basePath = resolveApiPath({
-    feature: "adminV2",
-    legacyPath: "/api/reviews",
-    revampPath: "/api/v2/reviews"
-  });
   return apiRequest<AdminReviewCaseSummary>(
-    `${basePath}/${encodeURIComponent(applicationId)}/assign`,
+    `${BASE}/${encodeURIComponent(applicationId)}/assign`,
     {
       method: "POST",
       body: payload ? JSON.stringify(payload) : undefined
@@ -73,13 +73,8 @@ export function requestAdminIntegration(
   token: string,
   payload: { dueAt: string; message: string; requestedItemsJson?: string }
 ): Promise<AdminReviewCaseSummary> {
-  const basePath = resolveApiPath({
-    feature: "adminV2",
-    legacyPath: "/api/reviews",
-    revampPath: "/api/v2/reviews"
-  });
   return apiRequest<AdminReviewCaseSummary>(
-    `${basePath}/${encodeURIComponent(reviewCaseId)}/integration-request`,
+    `${BASE}/${encodeURIComponent(reviewCaseId)}/integration-request`,
     {
       method: "POST",
       body: JSON.stringify(payload)
@@ -93,16 +88,29 @@ export function saveAdminReviewDecision(
   token: string,
   payload: { decision: "APPROVED" | "REJECTED" | "INTEGRATION_REQUIRED"; reason?: string }
 ): Promise<AdminReviewCaseSummary> {
-  const basePath = resolveApiPath({
-    feature: "adminV2",
-    legacyPath: "/api/reviews",
-    revampPath: "/api/v2/reviews"
-  });
   return apiRequest<AdminReviewCaseSummary>(
-    `${basePath}/${encodeURIComponent(reviewCaseId)}/decision`,
+    `${BASE}/${encodeURIComponent(reviewCaseId)}/decision`,
     {
       method: "POST",
       body: JSON.stringify(payload)
+    },
+    token
+  );
+}
+
+export function verifyAdminReviewCase(
+  reviewCaseId: string,
+  token: string,
+  payload?: {
+    verificationNote?: string;
+    verificationOutcome?: "COMPLIANT" | "COMPLIANT_WITH_RESERVATIONS" | "INCOMPLETE" | "NON_COMPLIANT";
+  }
+): Promise<AdminReviewCaseSummary> {
+  return apiRequest<AdminReviewCaseSummary>(
+    `${BASE}/${encodeURIComponent(reviewCaseId)}/verify`,
+    {
+      method: "POST",
+      body: payload ? JSON.stringify(payload) : undefined
     },
     token
   );
@@ -112,13 +120,8 @@ export function getLatestAdminIntegrationRequest(
   reviewCaseId: string,
   token: string
 ): Promise<AdminIntegrationRequestSummary | null> {
-  const basePath = resolveApiPath({
-    feature: "adminV2",
-    legacyPath: "/api/reviews",
-    revampPath: "/api/v2/reviews"
-  });
   return apiRequest<AdminIntegrationRequestSummary | null>(
-    `${basePath}/${encodeURIComponent(reviewCaseId)}/integration-latest`,
+    `${BASE}/${encodeURIComponent(reviewCaseId)}/integration-latest`,
     {},
     token
   );

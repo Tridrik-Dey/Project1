@@ -1,27 +1,32 @@
-import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, CheckCircle2, ClipboardList, Clock3, FileText, History, MessageSquare, XCircle } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AlertTriangle, ArrowLeft, CheckCircle2, ClipboardList, Clock3, FileText, History, Info, MessageSquare, RefreshCw, Save, XCircle } from "lucide-react";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import type { DashboardActivityEvent } from "../../api/adminDashboardEventsApi";
 import { type AdminRole } from "../../api/adminUsersRolesApi";
-import { HttpError } from "../../api/http";
+import { API_BASE_URL, HttpError } from "../../api/http";
 import { getRevampApplicationSections, getRevampApplicationSummary, type RevampApplicationSummary, type RevampSectionSnapshot } from "../../api/revampApplicationApi";
 import {
   getAdminReviewHistory,
   getLatestAdminIntegrationRequest,
   saveAdminReviewDecision,
+  verifyAdminReviewCase,
   type AdminIntegrationRequestSummary,
   type AdminReviewCaseSummary
 } from "../../api/adminReviewApi";
 import { useAuth } from "../../auth/AuthContext";
 import { AppToast } from "../../components/ui/toast";
 import { useAdminGovernanceRole } from "../../hooks/useAdminGovernanceRole";
+import { useAdminRealtimeRefresh } from "../../hooks/useAdminRealtimeRefresh";
 import { AdminCandidatureShell } from "./AdminCandidatureShell";
+import { SupplierProfileView } from "./components/SupplierProfileView";
 
-type CaseTab = "profile" | "history" | "notes";
-type DecisionAction = "APPROVED" | "INTEGRATION_REQUIRED" | "REJECTED";
+type DecisionAction = "APPROVED" | "REJECTED";
+type VerificationOutcome = "COMPLIANT" | "COMPLIANT_WITH_RESERVATIONS" | "INCOMPLETE" | "NON_COMPLIANT";
 type SectionPayload = Record<string, unknown>;
 type DocumentRow = { id: string; label: string; sectionLabel: string; url: string | null; hasLink: boolean };
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const DECISION_REASON_MAX = 500;
 
 function daysSince(iso: string | null): number | null {
   if (!iso) return null;
@@ -82,12 +87,67 @@ function findUrl(value: unknown): string | null {
   return null;
 }
 
+function findDocumentUrl(value: unknown, applicationId: string): string | null {
+  const directUrl = findUrl(value);
+  if (directUrl) return directUrl;
+  if (typeof value !== "string") return null;
+  const storageKey = value.trim();
+  if (!storageKey || !applicationId) return null;
+  return `/api/v2/applications/${encodeURIComponent(applicationId)}/attachments/download?storageKey=${encodeURIComponent(storageKey)}`;
+}
+
 function canFinalizeDecision(role: AdminRole | null): boolean {
   return role === "SUPER_ADMIN" || role === "RESPONSABILE_ALBO";
 }
 
 function canRequestIntegrationDecision(role: AdminRole | null): boolean {
-  return role === "SUPER_ADMIN" || role === "RESPONSABILE_ALBO" || role === "REVISORE";
+  return role === "SUPER_ADMIN" || role === "RESPONSABILE_ALBO";
+}
+
+function statusLabelOf(status: string | null | undefined): string {
+  if (status === "SUBMITTED") return "In attesa di revisione";
+  if (status === "IN_REVIEW") return "In revisione";
+  if (status === "APPROVED") return "Approvata";
+  if (status === "REJECTED") return "Non approvata";
+  if (status === "WAITING_SUPPLIER_RESPONSE") return "In attesa del fornitore";
+  return "—";
+}
+
+function statusToneOf(status: string | null | undefined): "ok" | "warn" | "danger" | "neutral" {
+  if (status === "APPROVED") return "ok";
+  if (status === "REJECTED") return "danger";
+  return "warn";
+}
+
+function historyStatusLabel(status: string): string {
+  if (status === "OPEN") return "Aperta";
+  if (status === "IN_PROGRESS") return "In revisione";
+  if (status === "READY_FOR_DECISION") return "Pronta per decisione";
+  if (status === "DECIDED") return "Decisione registrata";
+  if (status === "WAITING_SUPPLIER_RESPONSE") return "In attesa del fornitore";
+  return status;
+}
+
+function historyStatusTone(status: string): "ok" | "warn" | "neutral" {
+  if (status === "DECIDED") return "ok";
+  if (status === "WAITING_SUPPLIER_RESPONSE") return "warn";
+  return "neutral";
+}
+
+function makeInitials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "??";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return `${parts[0][0] ?? ""}${parts[1][0] ?? ""}`.toUpperCase();
+}
+
+function shouldRefreshApplicationCase(event: DashboardActivityEvent, applicationId: string): boolean {
+  const key = event.eventKey ?? "";
+  return (
+    event.entityType === "REVAMP_APPLICATION"
+    && event.entityId === applicationId
+    && (key.startsWith("revamp.review.") || key.startsWith("revamp.application."))
+  );
 }
 
 export function AdminApplicationCasePage() {
@@ -102,12 +162,18 @@ export function AdminApplicationCasePage() {
   const [loading, setLoading] = useState(false);
   const [busyAction, setBusyAction] = useState<DecisionAction | null>(null);
   const [latestIntegrationRequest, setLatestIntegrationRequest] = useState<AdminIntegrationRequestSummary | null>(null);
-  const [tab, setTab] = useState<CaseTab>("profile");
+
   const [approveReason, setApproveReason] = useState("");
-  const [integrationReason, setIntegrationReason] = useState("");
   const [rejectReason, setRejectReason] = useState("");
   const [internalNotes, setInternalNotes] = useState("");
   const [toast, setToast] = useState<{ message: string; type: "error" | "success" } | null>(null);
+  const [showVerifyModal, setShowVerifyModal] = useState(false);
+  const [verifyOutcome, setVerifyOutcome] = useState<VerificationOutcome>("COMPLIANT");
+  const [verifyNote, setVerifyNote] = useState("");
+  const [busyVerify, setBusyVerify] = useState(false);
+  const [showRejectConfirmModal, setShowRejectConfirmModal] = useState(false);
+  const caseRefreshInFlightRef = useRef(false);
+  const caseRefreshQueuedRef = useRef(false);
 
   const appId = applicationId.trim();
   const validAppId = UUID_PATTERN.test(appId);
@@ -123,9 +189,15 @@ export function AdminApplicationCasePage() {
     }
   }, [notesStorageKey, validAppId]);
 
-  async function loadCase() {
+  const loadCase = useCallback(async (showLoading = true) => {
     if (!token || !validAppId) return;
-    setLoading(true);
+    if (caseRefreshInFlightRef.current) {
+      caseRefreshQueuedRef.current = true;
+      return;
+    }
+
+    caseRefreshInFlightRef.current = true;
+    if (showLoading) setLoading(true);
     try {
       const summaryData = await getRevampApplicationSummary(appId, token);
       setSummary(summaryData);
@@ -167,14 +239,25 @@ export function AdminApplicationCasePage() {
       setReviewHistory([]);
       setLatestIntegrationRequest(null);
     } finally {
-      setLoading(false);
+      caseRefreshInFlightRef.current = false;
+      if (showLoading) setLoading(false);
+      if (caseRefreshQueuedRef.current) {
+        caseRefreshQueuedRef.current = false;
+        void loadCase(false);
+      }
     }
-  }
+  }, [appId, token, validAppId]);
 
   useEffect(() => {
-    void loadCase();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, appId]);
+    void loadCase(true);
+  }, [loadCase]);
+
+  useAdminRealtimeRefresh({
+    token,
+    enabled: validAppId,
+    shouldRefresh: (event) => shouldRefreshApplicationCase(event, appId),
+    onRefresh: () => loadCase(false)
+  });
 
   const latestCase = useMemo(() => reviewHistory[0] ?? null, [reviewHistory]);
   const submittedDays = useMemo(() => daysSince(summary?.submittedAt ?? null), [summary?.submittedAt]);
@@ -187,8 +270,16 @@ export function AdminApplicationCasePage() {
   const canFinalize = canFinalizeDecision(adminRole);
   const canRequestIntegration = canRequestIntegrationDecision(adminRole);
   const reviewReadOnly = auth?.role === "ADMIN" && adminRole === "VIEWER";
+  const canVerify = adminRole === "SUPER_ADMIN" || adminRole === "RESPONSABILE_ALBO" || adminRole === "REVISORE";
   const isFinalized = latestCase?.status === "DECIDED" || summary?.status === "APPROVED" || summary?.status === "REJECTED";
+  const hasOpenIntegrationRequest = latestIntegrationRequest?.status === "OPEN";
+  const awaitingSupplierResponse = latestCase?.status === "WAITING_SUPPLIER_RESPONSE" || hasOpenIntegrationRequest;
+  const notYetVerified = !latestCase?.verifiedAt;
+  const notYetAssigned = latestCase?.status === "PENDING_ASSIGNMENT";
+  const finalDecisionLocked = isFinalized || awaitingSupplierResponse || notYetVerified || notYetAssigned;
   const assignedToOther = Boolean(latestCase?.assignedToUserId && auth?.userId && latestCase.assignedToUserId !== auth.userId);
+  const assignmentLocked = assignedToOther && (adminRole === "REVISORE" || adminRole === "SUPER_ADMIN");
+  const isAlboB = summary?.registryType === "ALBO_B";
 
   const candidateHeaderTitle = useMemo(() => {
     if (!summary) return "Candidatura";
@@ -222,45 +313,10 @@ export function AdminApplicationCasePage() {
     return rows;
   }, [s1Payload, s2Payload, summary?.registryType]);
 
-  const profileSectionRows = useMemo(() => {
-    return sections.map((section) => {
-      const payload = parsePayload(section.payloadJson) ?? {};
-      let summaryText = "Nessun dettaglio disponibile";
-      if (section.sectionKey === "S1") {
-        summaryText = summary?.registryType === "ALBO_A"
-          ? [toScalar(payload.taxCode), toScalar(payload.phone), toScalar(payload.city)].filter(Boolean).join(" - ")
-          : [toScalar(payload.companyName), toScalar(payload.vatNumber), toScalar(payload.operationalContactEmail)].filter(Boolean).join(" - ");
-      } else if (section.sectionKey === "S2") {
-        summaryText = [toScalar(payload.professionalType), toScalar(payload.atecoCode), toScalar(payload.employeeRange), toScalar(payload.atecoPrimary)]
-          .filter(Boolean)
-          .join(" - ");
-      } else if (section.sectionKey === "S3A" || section.sectionKey === "S3B" || section.sectionKey === "S3") {
-        summaryText = [toScalar(payload.thematicAreasCsv), toScalar(payload.specialization), toScalar(payload.serviceCategoriesCsv)]
-          .filter(Boolean)
-          .join(" - ");
-      } else if (section.sectionKey === "S4") {
-        summaryText = [toScalar(payload.operationalCapacity), toScalar(payload.referencesSummary), toScalar(payload.accreditationSummary)]
-          .filter(Boolean)
-          .join(" - ");
-      } else if (section.sectionKey === "S5") {
-        summaryText = [toScalar(payload.acceptance1), toScalar(payload.acceptance2), toScalar(payload.acceptance3)]
-          .filter(Boolean)
-          .join(" - ");
-      }
-      return {
-        id: section.id,
-        label: sectionLabel(section.sectionKey),
-        completed: section.completed,
-        updatedAt: section.updatedAt,
-        summaryText: summaryText || "Nessun dettaglio disponibile"
-      };
-    });
-  }, [sections, summary?.registryType]);
-
   const documentRows = useMemo<DocumentRow[]>(() => {
     const rows: DocumentRow[] = [];
     const s1Photo = (s1Payload?.profilePhotoAttachment as Record<string, unknown> | undefined) ?? null;
-    const s1PhotoUrl = findUrl(s1Photo?.storageKey ?? s1Payload?.profilePhotoDataUrl);
+    const s1PhotoUrl = findDocumentUrl(s1Photo?.storageKey ?? s1Payload?.profilePhotoDataUrl, appId);
     if (s1Payload && (s1Photo || "profilePhotoDataUrl" in s1Payload || "profilePhotoName" in s1Payload)) {
       rows.push({
         id: "profile-photo",
@@ -279,7 +335,7 @@ export function AdminApplicationCasePage() {
       const expired = Boolean(attachment.expired);
       const expiringSoon = Boolean(attachment.expiringSoon);
       const stateLabel = expired ? "Scaduto" : (expiringSoon ? "In scadenza" : "");
-      const url = findUrl(attachment.storageKey);
+      const url = findDocumentUrl(attachment.storageKey, appId);
       rows.push({
         id: `S4-attachment-${index}`,
         label: `${labelParts.join(" - ")}${stateLabel ? ` (${stateLabel})` : ""}` || "Allegato",
@@ -296,7 +352,7 @@ export function AdminApplicationCasePage() {
     payloadCandidates.forEach((entry) => {
       if (!entry.payload) return;
       Object.entries(entry.payload).forEach(([field, raw]) => {
-        const url = findUrl(raw);
+        const url = findDocumentUrl(raw, appId);
         if (!url) return;
         rows.push({
           id: `${entry.key}-${field}`,
@@ -308,7 +364,7 @@ export function AdminApplicationCasePage() {
       });
     });
     return rows;
-  }, [s1Payload, s3Payload, s4Payload]);
+  }, [appId, s1Payload, s3Payload, s4Payload]);
 
   const checklistRows = useMemo(
     () => [
@@ -322,24 +378,38 @@ export function AdminApplicationCasePage() {
   );
 
   async function submitDecision(decision: DecisionAction, reason: string) {
-    const actionAllowed = decision === "INTEGRATION_REQUIRED" ? canRequestIntegration : canFinalize;
-    if (!actionAllowed || assignedToOther || isFinalized) {
+    const actionAllowed = canFinalize;
+    const trimmedReason = reason.trim();
+    const requiresReason = decision !== "APPROVED";
+    if (assignmentLocked) {
+      setToast({ message: "Pratica assegnata a un altro revisore: azione non consentita.", type: "error" });
+      return;
+    }
+    if (isFinalized) {
+      setToast({ message: "Pratica già finalizzata: azione non consentita.", type: "error" });
+      return;
+    }
+    if (awaitingSupplierResponse) {
+      setToast({ message: "Decisione bloccata: il fornitore deve prima rispondere alla richiesta di integrazione.", type: "error" });
+      return;
+    }
+    if (!actionAllowed) {
       setToast({ message: "Ruolo non autorizzato ad approvare/rigettare candidature.", type: "error" });
       return;
     }
-    if (!token || !latestCase || !reason.trim()) {
+    if (!token || !latestCase || (requiresReason && !trimmedReason)) {
       setToast({ message: "Inserisci una motivazione prima di inviare l'azione.", type: "error" });
       return;
     }
 
     setBusyAction(decision);
     try {
-      await saveAdminReviewDecision(latestCase.id, token, { decision, reason: reason.trim() });
+      await saveAdminReviewDecision(latestCase.id, token, {
+        decision,
+        reason: trimmedReason || undefined
+      });
       setToast({ message: "Decisione salvata correttamente.", type: "success" });
       await loadCase();
-      if (decision === "INTEGRATION_REQUIRED") {
-        navigate(`/admin/candidature/${appId}/integration`);
-      }
     } catch (error) {
       const message = error instanceof HttpError ? error.message : "Salvataggio decisione non riuscito.";
       setToast({ message, type: "error" });
@@ -348,9 +418,64 @@ export function AdminApplicationCasePage() {
     }
   }
 
-  function openDocument(url: string | null) {
+  function goToIntegrationPage() {
+    if (!canRequestIntegration) return;
+    navigate(`/admin/candidature/${appId}/integration`);
+  }
+
+  async function submitVerify() {
+    if (!latestCase || !token) return;
+    setBusyVerify(true);
+    try {
+      await verifyAdminReviewCase(latestCase.id, token, {
+        verificationNote: verifyNote.trim() || undefined,
+        verificationOutcome: verifyOutcome
+      });
+      setShowVerifyModal(false);
+      const outcome = verifyOutcome;
+      setVerifyNote("");
+      setVerifyOutcome("COMPLIANT");
+      if (outcome === "INCOMPLETE") {
+        setToast({ message: "Verifica salvata. Compila e invia la richiesta al fornitore nel modulo seguente.", type: "success" });
+        await loadCase();
+        navigate(`/admin/candidature/${appId}/integration`);
+      } else {
+        setToast({ message: "Verifica completata correttamente.", type: "success" });
+        await loadCase();
+      }
+    } catch (error) {
+      const message = error instanceof HttpError ? error.message : "Salvataggio verifica non riuscito.";
+      setToast({ message, type: "error" });
+    } finally {
+      setBusyVerify(false);
+    }
+  }
+
+  async function openDocument(url: string | null) {
     if (!url) return;
-    window.open(url, "_blank", "noopener,noreferrer");
+    if (!url.startsWith("/api/")) {
+      window.open(url, "_blank", "noopener,noreferrer");
+      return;
+    }
+    const targetWindow = window.open("about:blank", "_blank", "noopener,noreferrer");
+    if (targetWindow) targetWindow.document.body.innerHTML = "<p style=\"font-family:sans-serif;padding:24px\">Apertura documento in corso…</p>";
+    try {
+      const response = await fetch(`${API_BASE_URL}${url}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const blob = await response.blob();
+      const objectUrl = window.URL.createObjectURL(blob);
+      if (targetWindow) {
+        targetWindow.location.href = objectUrl;
+      } else {
+        window.open(objectUrl, "_blank", "noopener,noreferrer");
+      }
+      window.setTimeout(() => window.URL.revokeObjectURL(objectUrl), 60_000);
+    } catch {
+      targetWindow?.close();
+      setToast({ message: "Documento non apribile. File non trovato o accesso non autorizzato.", type: "error" });
+    }
   }
 
   function saveInternalNotes() {
@@ -362,241 +487,469 @@ export function AdminApplicationCasePage() {
     }
   }
 
+  const heroInitials = makeInitials(candidateHeaderTitle);
+
   return (
     <AdminCandidatureShell active="candidature">
-      <section className="stack admin-review-case-shell">
-        {toast ? <AppToast toast={toast} onClose={() => setToast(null)} className="admin-toast" /> : null}
+      {toast ? <AppToast toast={toast} onClose={() => setToast(null)} className="admin-toast" /> : null}
 
-      <div className="panel">
-        <h2><FileText className="h-5 w-5" /> Revisione candidatura</h2>
-        <p className="subtle">Application ID: {appId || "n/d"}</p>
-        {!validAppId ? <p className="error">Application ID non valido (UUID richiesto).</p> : null}
+      {/* ── Sticky top bar ── */}
+      <div className="review-sticky-bar">
+        <Link to="/admin/candidature" className="review-back-btn">
+          <ArrowLeft size={15} /> Torna alla lista
+        </Link>
+        <div className="review-sticky-identity">
+          <span className="review-sticky-name">{candidateHeaderTitle}</span>
+          <span className={`review-albo-badge ${isAlboB ? "albo-b" : "albo-a"}`}>
+            {isAlboB ? "Albo Aziende" : "Albo Professionisti"}
+          </span>
+          <span className={`review-sticky-status tone-${statusToneOf(summary?.status)}`}>
+            {statusLabelOf(summary?.status)}
+          </span>
+        </div>
+        {isUrgent ? <span className="review-urgent-pill"><AlertTriangle size={13} /> Urgente</span> : null}
+        <button type="button" className="review-refresh-btn" onClick={() => void loadCase()} disabled={loading}>
+          <RefreshCw size={14} className={loading ? "spin" : ""} />
+        </button>
       </div>
 
-      {summary && isUrgent ? (
-        <div className="panel admin-review-urgency-banner">
-          <p>
-            <AlertTriangle className="h-4 w-4" />
-            Candidatura in attesa da {submittedDays} giorni lavorativi: oltre la soglia di alert (&gt;5gg).
-          </p>
-        </div>
-      ) : null}
+      <section className="stack review-case-shell">
 
-      <div className="admin-review-top-grid">
-        <div className="panel admin-review-candidate-card">
-          <div className="admin-review-candidate-head">
-            <span className="candidate-avatar">{summary ? appShortCode(summary.id).slice(2, 4) : "NA"}</span>
-            <div>
-              <h3>{candidateHeaderTitle}</h3>
-              <p className="subtle">
-                Registro: {summary?.registryType ?? "n/d"} - Canale: {summary?.sourceChannel ?? "n/d"} - Revisione: {summary?.currentRevision ?? 0}
-              </p>
-            </div>
-          </div>
-          <div className="admin-review-candidate-meta">
-            <p><strong>Protocollo:</strong> {summary?.protocolCode ?? "n/d"}</p>
-            <p><strong>Stato:</strong> {summary?.status ?? "n/d"}</p>
-            <p><strong>Ultimo aggiornamento:</strong> {summary ? new Date(summary.updatedAt).toLocaleString("it-IT") : "n/d"}</p>
-            <p><strong>Assegnata a:</strong> {latestCase?.assignedToDisplayName ?? "Non assegnata"}</p>
-            <p><strong>SLA:</strong> {latestCase?.slaDueAt ? new Date(latestCase.slaDueAt).toLocaleString("it-IT") : "n/d"}</p>
-            {candidateMetaRows.map((row) => (
-              <p key={row.label}><strong>{row.label}:</strong> {row.value}</p>
-            ))}
-          </div>
-          <div className="admin-review-inline-actions">
-            <button type="button" className="home-btn home-btn-secondary" onClick={() => void loadCase()} disabled={loading}>
-              {loading ? "Aggiornamento..." : "Aggiorna pratica"}
-            </button>
-            <Link className="home-btn home-btn-secondary" to={`/admin/candidature/${appId}/integration`}>Apri integrazione</Link>
-            <Link className="home-btn home-btn-secondary" to="/admin/candidature">Torna alla coda</Link>
-          </div>
-        </div>
-
-        <div className="panel">
-          <h4>Checklist documentale</h4>
-          <div className="admin-review-checklist">
-            {checklistRows.map((row) => (
-              <p key={row.label} className={row.done ? "check-ok" : "check-missing"}>
-                {row.done ? <CheckCircle2 className="h-4 w-4" /> : <XCircle className="h-4 w-4" />}
-                {row.label}
-              </p>
-            ))}
-            {sections.length > 0 ? (
-              <div className="admin-review-section-tags">
-                {sections.map((section) => (
-                  <span key={section.id} className={section.completed ? "section-tag done" : "section-tag pending"}>
-                    {sectionLabel(section.sectionKey)}
-                  </span>
-                ))}
+        {/* ── Hero card ── */}
+        <div className="panel review-hero-card">
+          <div className="review-hero-avatar">{heroInitials}</div>
+          <div className="review-hero-body">
+            <h3 className="review-hero-name">{candidateHeaderTitle}</h3>
+            <p className="review-hero-type">
+              {isAlboB ? "Azienda fornitrice" : "Professionista"} &nbsp;·&nbsp;
+              {isAlboB ? "Albo Fornitori Aziende" : "Albo Fornitori Professionisti"}
+            </p>
+            <div className="review-hero-meta-grid">
+              <div className="review-hero-meta-item">
+                <span className="review-meta-label">Codice pratica</span>
+                <span className="review-meta-value">{summary ? appShortCode(summary.id) : "—"}</span>
               </div>
-            ) : null}
-            <div className="admin-review-history-list">
-              {documentRows.length === 0 ? (
-                <p className="subtle">Nessun documento con URL disponibile nei payload sezione.</p>
-              ) : (
-                documentRows.map((row) => (
-                  <article key={row.id} className="admin-review-history-card">
-                    <p><strong>{row.label}</strong> <span className="subtle">({row.sectionLabel})</span></p>
-                    <button
-                      type="button"
-                      className={row.hasLink ? "home-btn home-btn-secondary" : "home-btn home-btn-secondary"}
-                      disabled={!row.hasLink}
-                      onClick={() => openDocument(row.url)}
-                    >
-                      Apri
-                    </button>
-                  </article>
-                ))
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="panel">
-        <div className="admin-review-tabs">
-          <button type="button" className={tab === "profile" ? "active" : ""} onClick={() => setTab("profile")}><ClipboardList className="h-4 w-4" /> Profilo</button>
-          <button type="button" className={tab === "history" ? "active" : ""} onClick={() => setTab("history")}><History className="h-4 w-4" /> Storico pratica</button>
-          <button type="button" className={tab === "notes" ? "active" : ""} onClick={() => setTab("notes")}><MessageSquare className="h-4 w-4" /> Note interne</button>
-        </div>
-      </div>
-
-      {tab === "profile" ? (
-        <div className="panel">
-          <h4>Profilo candidatura</h4>
-          <div className="admin-review-profile-grid">
-            {sections.length === 0 ? <p className="subtle">Nessuna sezione disponibile.</p> : null}
-            {profileSectionRows.map((section) => (
-              <article key={section.id} className="admin-review-profile-card">
-                <h5>{section.label}</h5>
-                <p className="subtle">Completata: {section.completed ? "SI" : "NO"}</p>
-                <p className="subtle">{section.summaryText}</p>
-                <p className="subtle">Aggiornata: {new Date(section.updatedAt).toLocaleString("it-IT")}</p>
-              </article>
-            ))}
-          </div>
-        </div>
-      ) : null}
-
-      {tab === "history" ? (
-        <div className="panel">
-          <h4>Storico workflow review</h4>
-          {reviewHistory.length === 0 ? <p className="subtle">Nessun evento review disponibile.</p> : null}
-          {reviewHistory.length > 0 ? (
-            <div className="admin-review-history-list">
-              {reviewHistory.map((item) => (
-                <article key={item.id} className="admin-review-history-card">
-                  <p><strong>Case:</strong> {item.id}</p>
-                  <p className="subtle">Status: {item.status}</p>
-                  <p className="subtle">Decisione: {item.decision ?? "n/d"}</p>
-                  <p className="subtle">SLA: {item.slaDueAt ? new Date(item.slaDueAt).toLocaleString("it-IT") : "n/d"}</p>
-                  <p className="subtle">Aggiornato: {new Date(item.updatedAt).toLocaleString("it-IT")}</p>
-                </article>
+              <div className="review-hero-meta-item">
+                <span className="review-meta-label">Data invio</span>
+                <span className="review-meta-value">{summary?.submittedAt ? new Date(summary.submittedAt).toLocaleDateString("it-IT") : "—"}</span>
+              </div>
+              <div className="review-hero-meta-item">
+                <span className="review-meta-label">Giorni in attesa</span>
+                <span className={`review-meta-value${(submittedDays ?? 0) >= 5 ? " val-warn" : ""}`}>{submittedDays ?? "—"} gg</span>
+              </div>
+              <div className="review-hero-meta-item">
+                <span className="review-meta-label">Assegnata a</span>
+                <span className="review-meta-value">{latestCase?.assignedToDisplayName ?? "Non assegnata"}</span>
+              </div>
+              <div className="review-hero-meta-item">
+                <span className="review-meta-label">Scadenza SLA</span>
+                <span className="review-meta-value">{latestCase?.slaDueAt ? new Date(latestCase.slaDueAt).toLocaleDateString("it-IT") : "—"}</span>
+              </div>
+              {candidateMetaRows.map((row) => (
+                <div key={row.label} className="review-hero-meta-item">
+                  <span className="review-meta-label">{row.label}</span>
+                  <span className="review-meta-value">{row.value}</span>
+                </div>
               ))}
             </div>
-          ) : null}
+          </div>
         </div>
-      ) : null}
 
-      {tab === "notes" ? (
-        <div className="panel">
-          <h4>Note del revisore</h4>
-          <label className={`floating-field ${internalNotes ? "has-value" : ""}`}>
-            <textarea
-              className="floating-input"
-              rows={6}
-              value={internalNotes}
-              onChange={(event) => setInternalNotes(event.target.value)}
-              placeholder=" "
-            />
-            <span className="floating-field-label">Annotazioni interne pratica</span>
-          </label>
-          <div className="revamp-step-actions">
-            <button type="button" className="home-btn home-btn-primary" onClick={saveInternalNotes}>Salva nota</button>
+        {/* ── Verification outcome banner ── */}
+        {latestCase?.verifiedAt ? (
+          <>
+            <div className={`review-outcome-banner outcome-${(latestCase.verificationOutcome ?? "COMPLIANT").toLowerCase()}`}>
+              <span className="review-outcome-icon">
+                {latestCase.verificationOutcome === "COMPLIANT" ? "✅" :
+                 latestCase.verificationOutcome === "COMPLIANT_WITH_RESERVATIONS" ? "⚠️" :
+                 latestCase.verificationOutcome === "INCOMPLETE" ? "📋" : "❌"}
+              </span>
+              <div className="review-outcome-body">
+                <strong className="review-outcome-title">
+                  {latestCase.verificationOutcome === "COMPLIANT" ? "Tutto conforme" :
+                   latestCase.verificationOutcome === "COMPLIANT_WITH_RESERVATIONS" ? "Conforme con riserve" :
+                   latestCase.verificationOutcome === "INCOMPLETE" ? "Documenti mancanti" : "Non conforme"}
+                </strong>
+                <span className="review-outcome-meta">
+                  Verificato da <strong>{latestCase.verifiedByDisplayName ?? "un revisore"}</strong> il {new Date(latestCase.verifiedAt).toLocaleDateString("it-IT")}
+                </span>
+                {latestCase.verificationNote ? (
+                  <p className="review-outcome-note">&ldquo;{latestCase.verificationNote}&rdquo;</p>
+                ) : null}
+              </div>
+            </div>
+            {latestCase.verificationOutcome === "INCOMPLETE" && !latestIntegrationRequest ? (
+              <div className="review-state-banner state-warn">
+                <AlertTriangle size={14} />
+                <span>Richiesta integrazione non ancora inviata — il fornitore non è stato notificato. <button type="button" className="review-inline-link" onClick={goToIntegrationPage}>Invia ora</button></span>
+              </div>
+            ) : null}
+          </>
+        ) : null}
+
+        {/* ── Main two-column layout ── */}
+        <div className="review-content-grid">
+
+          {/* LEFT: Full profile sections */}
+          <div className="review-main-col">
+            {loading ? (
+              <div className="panel review-loading-panel"><p className="subtle">Caricamento profilo in corso…</p></div>
+            ) : (
+              <SupplierProfileView isAlboB={isAlboB} sections={sections} />
+            )}
+          </div>
+
+          {/* RIGHT: Sticky sidebar */}
+          <div className="review-sidebar">
+
+            {/* Decision panel */}
+            <div className="panel review-decision-panel">
+              <div className="review-decision-header">
+                <ClipboardList size={16} />
+                <h4>Decisione sulla candidatura</h4>
+                {reviewReadOnly ? <span className="review-viewer-badge">Solo lettura</span> : null}
+              </div>
+
+              {/* Assignment context banners */}
+              {!isFinalized && assignedToOther && adminRole === "RESPONSABILE_ALBO" ? (
+                <div className="review-state-banner state-info">
+                  <Info size={14} />
+                  <span>Assegnata a <strong>{latestCase?.assignedToDisplayName ?? "un revisore"}</strong>. Puoi verificare e decidere tu stesso.</span>
+                </div>
+              ) : !isFinalized && assignedToOther && adminRole === "SUPER_ADMIN" ? (
+                <div className="review-state-banner state-readonly">
+                  <Info size={14} />
+                  <span>Assegnata a <strong>{latestCase?.assignedToDisplayName ?? "un revisore"}</strong>. Accesso in sola lettura.</span>
+                </div>
+              ) : null}
+
+              {/* State banners */}
+              {isFinalized ? (
+                <div className="review-state-banner state-finalized">
+                  <CheckCircle2 size={14} />
+                  <span>Decisione già registrata per questa candidatura.</span>
+                </div>
+              ) : awaitingSupplierResponse ? (
+                <div className="review-state-banner state-waiting">
+                  <Clock3 size={14} />
+                  <span>In attesa della risposta del fornitore. Le azioni sono temporaneamente bloccate.</span>
+                </div>
+              ) : latestIntegrationRequest?.status === "ANSWERED" && !latestCase?.verifiedAt ? (
+                <div className="review-state-banner state-warn">
+                  <AlertTriangle size={14} />
+                  <span>Il fornitore ha risposto alla richiesta di integrazione. Esamina i nuovi documenti e verifica il profilo prima di procedere.</span>
+                </div>
+              ) : !latestCase?.verifiedAt && canVerify ? (
+                <div className="review-state-banner state-warn">
+                  <AlertTriangle size={14} />
+                  <span>Il profilo non è ancora stato verificato.</span>
+                </div>
+              ) : null}
+
+              {/* Completeness checklist */}
+              <div className="review-checklist-mini">
+                {checklistRows.map((row) => (
+                  <div key={row.label} className={`review-check-row ${row.done ? "check-done" : "check-missing"}`}>
+                    {row.done ? <CheckCircle2 size={13} /> : <XCircle size={13} />}
+                    <span>{row.label}</span>
+                  </div>
+                ))}
+                <div className="review-section-tags">
+                  {sections.map((s) => (
+                    <span key={s.id} className={s.completed ? "section-chip done" : "section-chip pending"}>
+                      {sectionLabel(s.sectionKey)}
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              {/* Verify action */}
+              {!isFinalized && !awaitingSupplierResponse && !notYetAssigned && !assignmentLocked && canVerify && latestCase && !latestCase.verifiedAt ? (
+                <button type="button" className="review-verify-btn" onClick={() => setShowVerifyModal(true)}>
+                  <CheckCircle2 size={14} /> Esamina e segna l'esito
+                </button>
+              ) : null}
+
+              <div className="review-decision-divider" />
+
+              {/* APPROVE */}
+              {canFinalize ? (
+                <div className="review-decision-block review-approve-block">
+                  <div className="review-decision-block-head">
+                    <CheckCircle2 size={15} /><strong>Approva iscrizione</strong>
+                  </div>
+                  <p className="review-decision-hint">Il fornitore verrà iscritto all'albo e potrà operare da subito.</p>
+                  <label className="review-compact-label">Nota (opzionale)</label>
+                  <textarea className="review-compact-textarea" rows={2} value={approveReason} maxLength={DECISION_REASON_MAX}
+                    onChange={(e) => setApproveReason(e.target.value)} placeholder="Aggiungi una nota opzionale…"
+                    readOnly={isFinalized || notYetAssigned || assignmentLocked} />
+                  <button type="button" className="review-btn-approve"
+                    onClick={() => void submitDecision("APPROVED", approveReason)}
+                    disabled={!latestCase || busyAction !== null || finalDecisionLocked || assignmentLocked}>
+                    {busyAction === "APPROVED" ? "Approvazione in corso…" : "✓  Approva"}
+                  </button>
+                </div>
+              ) : null}
+
+              {/* INTEGRATION */}
+              {canRequestIntegration ? (
+                <div className="review-decision-block review-integration-block">
+                  <div className="review-decision-block-head">
+                    <ClipboardList size={15} /><strong>Richiedi documenti mancanti</strong>
+                  </div>
+                  <p className="review-decision-hint">Segnala al fornitore cosa deve completare prima dell'approvazione.</p>
+                  <button type="button" className="review-btn-integration" onClick={goToIntegrationPage}
+                    disabled={finalDecisionLocked || assignmentLocked}>
+                    Invia richiesta al fornitore
+                  </button>
+                  {awaitingSupplierResponse ? (
+                    <p className="review-decision-hint-warn">Già in attesa di risposta dal fornitore.</p>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {/* REJECT */}
+              {canFinalize ? (
+                <div className="review-decision-block review-reject-block">
+                  <div className="review-decision-block-head">
+                    <XCircle size={15} /><strong>Rifiuta candidatura</strong>
+                  </div>
+                  <p className="review-decision-hint">La candidatura sarà chiusa. Il fornitore riceverà notifica del rifiuto.</p>
+                  <label className="review-compact-label">Motivo del rifiuto <span className="review-required-star">*</span></label>
+                  <textarea className="review-compact-textarea" rows={2} value={rejectReason} maxLength={DECISION_REASON_MAX}
+                    onChange={(e) => setRejectReason(e.target.value)} placeholder="Descrivi il motivo del rifiuto…"
+                    readOnly={isFinalized || notYetAssigned || assignmentLocked} />
+                  {!rejectReason.trim() ? (
+                    <p className="review-field-hint">Scrivi un motivo per abilitare il pulsante.</p>
+                  ) : null}
+                  <button type="button" className="review-btn-reject"
+                    onClick={() => setShowRejectConfirmModal(true)}
+                    disabled={!latestCase || busyAction !== null || finalDecisionLocked || assignmentLocked || !rejectReason.trim()}>
+                    {busyAction === "REJECTED" ? "Chiusura in corso…" : "✕  Rifiuta candidatura"}
+                  </button>
+                </div>
+              ) : null}
+
+              {!canFinalize && !canRequestIntegration ? (
+                <p className="subtle review-no-action-hint">Non hai i permessi per agire su questa candidatura.</p>
+              ) : null}
+            </div>
+
+            {/* Documents panel */}
+            {documentRows.length > 0 ? (
+              <div className="panel review-docs-panel">
+                <h4><FileText size={15} /> Documenti allegati</h4>
+                <div className="review-doc-list">
+                  {documentRows.map((row) => (
+                    <div key={row.id} className="review-doc-row">
+                      <div className="review-doc-info">
+                        <span className="review-doc-name">{row.label}</span>
+                        <span className="review-doc-section">{row.sectionLabel}</span>
+                      </div>
+                      <button type="button" className="review-doc-open-btn" disabled={!row.hasLink}
+                        onClick={() => void openDocument(row.url)}>
+                        Apri
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {/* Integration request status */}
+            {latestIntegrationRequest ? (
+              <div className="panel review-integration-status-panel">
+                <h4>Ultima richiesta al fornitore</h4>
+                <div className="review-integration-info">
+                  <div>
+                    <span className="review-meta-label">Stato</span>
+                    <span className={`review-integ-status-badge ${latestIntegrationRequest.status === "OPEN" ? "status-open" : "status-closed"}`}>
+                      {latestIntegrationRequest.status === "OPEN"
+                        ? "In attesa di risposta"
+                        : latestIntegrationRequest.status === "ANSWERED"
+                          ? "Risposta ricevuta"
+                          : latestIntegrationRequest.status === "OVERDUE"
+                            ? "Scaduta"
+                            : "Chiusa"}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="review-meta-label">Scadenza</span>
+                    <span className="review-meta-value">{new Date(latestIntegrationRequest.dueAt).toLocaleDateString("it-IT")}</span>
+                  </div>
+                  {latestIntegrationRequest.requestMessage ? (
+                    <div>
+                      <span className="review-meta-label">Messaggio inviato</span>
+                      <p className="review-integration-message">{latestIntegrationRequest.requestMessage}</p>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
+
+            {/* Internal notes */}
+            <div className="panel review-notes-panel">
+              <h4><MessageSquare size={15} /> Note interne</h4>
+              <p className="subtle review-notes-hint">Visibili solo agli amministratori, non al fornitore.</p>
+              <textarea className="review-compact-textarea" rows={4} value={internalNotes}
+                onChange={(e) => setInternalNotes(e.target.value)} placeholder="Scrivi annotazioni interne…" />
+              <button type="button" className="home-btn home-btn-secondary review-save-notes-btn" onClick={saveInternalNotes}>
+                <Save size={14} /> Salva nota
+              </button>
+            </div>
+
+          </div>{/* end sidebar */}
+        </div>{/* end review-content-grid */}
+
+        {/* ── History timeline ── */}
+        {reviewHistory.length > 0 ? (
+          <div className="panel review-history-panel">
+            <h4><History size={15} /> Cronologia revisioni</h4>
+            <div className="review-history-timeline">
+              {reviewHistory.map((item, idx) => (
+                <div key={item.id} className={`review-history-item${idx === 0 ? " item-latest" : ""}`}>
+                  <div className="review-history-dot" />
+                  <div className="review-history-content">
+                    <div className="review-history-top">
+                      <span className={`review-history-status tone-${historyStatusTone(item.status)}`}>
+                        {historyStatusLabel(item.status)}
+                      </span>
+                      {item.decision ? (
+                        <span className={`review-history-decision ${item.decision === "APPROVED" ? "dec-approve" : "dec-reject"}`}>
+                          {item.decision === "APPROVED" ? "Approvata" : "Non approvata"}
+                        </span>
+                      ) : null}
+                      <span className="review-history-date">{new Date(item.updatedAt).toLocaleString("it-IT")}</span>
+                    </div>
+                    {item.slaDueAt ? (
+                      <p className="review-history-detail">Scadenza: {new Date(item.slaDueAt).toLocaleDateString("it-IT")}</p>
+                    ) : null}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+      </section>
+
+      {/* ── Verify modal ── */}
+      {showVerifyModal ? (
+        <div className="modal-overlay" onClick={() => setShowVerifyModal(false)}>
+          <div className="modal-panel verify-modal-panel" onClick={(e) => e.stopPropagation()}>
+            <h4 className="verify-modal-title">Esito della verifica documentale</h4>
+            <p className="subtle verify-modal-subtitle">Seleziona il risultato del tuo esame dei documenti presentati.</p>
+
+            <div className="verify-outcome-options">
+              {([
+                {
+                  value: "COMPLIANT" as VerificationOutcome,
+                  icon: "✅",
+                  label: "Tutto conforme",
+                  desc: "Documenti completi e corretti. Si può procedere con l'approvazione.",
+                  noteLabel: null
+                },
+                {
+                  value: "COMPLIANT_WITH_RESERVATIONS" as VerificationOutcome,
+                  icon: "⚠️",
+                  label: "Conforme con riserve",
+                  desc: "Documenti presenti ma con alcune osservazioni da segnalare.",
+                  noteLabel: "Descrivi le osservazioni (obbligatorio)"
+                },
+                {
+                  value: "INCOMPLETE" as VerificationOutcome,
+                  icon: "📋",
+                  label: "Documenti mancanti",
+                  desc: "Mancano documenti richiesti. Dovrai compilare e inviare la richiesta nel passaggio successivo.",
+                  noteLabel: "Indica cosa manca (obbligatorio)"
+                },
+                {
+                  value: "NON_COMPLIANT" as VerificationOutcome,
+                  icon: "❌",
+                  label: "Non conforme",
+                  desc: "I documenti non soddisfano i requisiti. Si consiglia il rifiuto.",
+                  noteLabel: "Motiva la non conformità (obbligatorio)"
+                }
+              ] as const).map((opt) => (
+                <label key={opt.value} className={`verify-outcome-card ${verifyOutcome === opt.value ? "is-selected" : ""}`}>
+                  <input type="radio" name="verifyOutcome" value={opt.value}
+                    checked={verifyOutcome === opt.value} onChange={() => setVerifyOutcome(opt.value)} />
+                  <span className="verify-outcome-card-icon">{opt.icon}</span>
+                  <span className="verify-outcome-card-body">
+                    <strong>{opt.label}</strong>
+                    <span>{opt.desc}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+
+            {(() => {
+              const noteRequired = verifyOutcome !== "COMPLIANT";
+              const currentOpt = verifyOutcome === "COMPLIANT_WITH_RESERVATIONS"
+                ? "Descrivi le osservazioni (obbligatorio)"
+                : verifyOutcome === "INCOMPLETE"
+                ? "Indica cosa manca (obbligatorio)"
+                : verifyOutcome === "NON_COMPLIANT"
+                ? "Motiva la non conformità (obbligatorio)"
+                : "Note aggiuntive (opzionale)";
+              return (
+                <div className="verify-note-block">
+                  <label className="review-compact-label">
+                    {currentOpt}
+                    {noteRequired && !verifyNote.trim() ? <span className="review-required-star"> *</span> : null}
+                  </label>
+                  <textarea className="review-compact-textarea" rows={3} value={verifyNote} maxLength={1000}
+                    onChange={(e) => setVerifyNote(e.target.value)}
+                    placeholder={noteRequired ? "Scrivi qui le tue osservazioni…" : "Aggiungi una nota opzionale…"} />
+                  {noteRequired && !verifyNote.trim() ? (
+                    <p className="review-field-hint">Richiesto per questo esito.</p>
+                  ) : null}
+                </div>
+              );
+            })()}
+
+            {verifyOutcome === "INCOMPLETE" ? (
+              <p className="verify-incomplete-hint">
+                📋 Dopo la conferma potrai compilare e inviare la richiesta al fornitore. La richiesta non viene inviata automaticamente: dovrai completare il modulo nel passaggio successivo.
+              </p>
+            ) : null}
+
+            <div className="modal-actions">
+              <button type="button" className="home-btn home-btn-secondary" onClick={() => setShowVerifyModal(false)} disabled={busyVerify}>
+                Annulla
+              </button>
+              <button type="button" className="home-btn home-btn-primary"
+                onClick={() => void submitVerify()}
+                disabled={busyVerify || (verifyOutcome !== "COMPLIANT" && !verifyNote.trim())}>
+                {busyVerify ? "Salvataggio…" : verifyOutcome === "INCOMPLETE" ? "Conferma e apri integrazione" : "Conferma verifica"}
+              </button>
+            </div>
           </div>
         </div>
       ) : null}
 
-      <div className="panel">
-        <h4><Clock3 className="h-4 w-4" /> Decisione sulla candidatura</h4>
-        {isFinalized ? (
-          <p className="subtle">Pratica con decisione finale registrata: azioni decisionali in sola lettura.</p>
-        ) : null}
-        {reviewReadOnly ? (
-          <p className="subtle">Ruolo VIEWER: consultazione abilitata, azioni decisionali disabilitate.</p>
-        ) : null}
-        {assignedToOther ? (
-          <p className="subtle">Pratica assegnata a un altro revisore: azioni decisionali bloccate.</p>
-        ) : null}
-        <div className="admin-review-decisions-grid">
-          <article className="decision-card approve">
-            <h5>Approva iscrizione</h5>
-            <p className="subtle">Attiva immediatamente il profilo del fornitore.</p>
-            <label className={`floating-field ${approveReason ? "has-value" : ""}`}>
-              <textarea className="floating-input" rows={3} value={approveReason} onChange={(event) => setApproveReason(event.target.value)} placeholder=" " />
-              <span className="floating-field-label">Motivazione approvazione</span>
-            </label>
-            <button
-              type="button"
-              className="home-btn decision-btn-approve"
-              onClick={() => void submitDecision("APPROVED", approveReason)}
-              disabled={!latestCase || busyAction !== null || !canFinalize || assignedToOther || isFinalized}
-            >
-              {busyAction === "APPROVED" ? "Approvazione..." : "Approva"}
-            </button>
-          </article>
-
-          <article className="decision-card integration">
-            <h5>Richiedi integrazione</h5>
-            <p className="subtle">Richiedi documenti mancanti o chiarimenti specifici.</p>
-            <label className={`floating-field ${integrationReason ? "has-value" : ""}`}>
-              <textarea className="floating-input" rows={3} value={integrationReason} onChange={(event) => setIntegrationReason(event.target.value)} placeholder=" " />
-              <span className="floating-field-label">Motivazione integrazione</span>
-            </label>
-            <button
-              type="button"
-              className="home-btn decision-btn-integration"
-              onClick={() => void submitDecision("INTEGRATION_REQUIRED", integrationReason)}
-              disabled={!latestCase || busyAction !== null || !canRequestIntegration || assignedToOther || isFinalized}
-            >
-              {busyAction === "INTEGRATION_REQUIRED" ? "Invio..." : "Invia richiesta"}
-            </button>
-          </article>
-
-          <article className="decision-card reject">
-            <h5>Rigetta candidatura</h5>
-            <p className="subtle">Chiudi la revisione con esito negativo motivato.</p>
-            <label className={`floating-field ${rejectReason ? "has-value" : ""}`}>
-              <textarea className="floating-input" rows={3} value={rejectReason} onChange={(event) => setRejectReason(event.target.value)} placeholder=" " />
-              <span className="floating-field-label">Motivazione rigetto</span>
-            </label>
-            <button
-              type="button"
-              className="home-btn decision-btn-reject"
-              onClick={() => void submitDecision("REJECTED", rejectReason)}
-              disabled={!latestCase || busyAction !== null || !canFinalize || assignedToOther || isFinalized}
-            >
-              {busyAction === "REJECTED" ? "Rigetto..." : "Rigetta"}
-            </button>
-          </article>
-        </div>
-      </div>
-
-      {latestIntegrationRequest ? (
-        <div className="panel">
-          <h4>Ultima richiesta integrazione</h4>
-          <p className="subtle"><strong>Stato:</strong> {latestIntegrationRequest.status}</p>
-          <p className="subtle"><strong>Scadenza:</strong> {new Date(latestIntegrationRequest.dueAt).toLocaleString("it-IT")}</p>
-          <p className="subtle"><strong>Messaggio:</strong> {latestIntegrationRequest.requestMessage}</p>
-          <p className="subtle">
-            <strong>Elementi richiesti:</strong>{" "}
-            {typeof latestIntegrationRequest.requestedItemsJson === "string"
-              ? latestIntegrationRequest.requestedItemsJson
-              : JSON.stringify(latestIntegrationRequest.requestedItemsJson)}
-          </p>
+      {/* ── Reject confirm modal ── */}
+      {showRejectConfirmModal ? (
+        <div className="modal-overlay" onClick={() => setShowRejectConfirmModal(false)}>
+          <div className="modal-panel" onClick={(e) => e.stopPropagation()}>
+            <h4 className="verify-modal-title">Conferma rifiuto candidatura</h4>
+            <p className="subtle">Stai per rifiutare definitivamente questa candidatura. Il fornitore riceverà una notifica con il motivo indicato. Questa azione non può essere annullata.</p>
+            <div className="modal-actions">
+              <button type="button" className="home-btn home-btn-secondary" onClick={() => setShowRejectConfirmModal(false)}>
+                Annulla
+              </button>
+              <button type="button" className="review-btn-reject"
+                onClick={() => {
+                  setShowRejectConfirmModal(false);
+                  void submitDecision("REJECTED", rejectReason);
+                }}>
+                Conferma rifiuto
+              </button>
+            </div>
+          </div>
         </div>
       ) : null}
-      </section>
     </AdminCandidatureShell>
   );
 }
+

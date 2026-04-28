@@ -1,6 +1,7 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, CheckCircle2, Mail, Send } from "lucide-react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AlertTriangle, ArrowLeft, CalendarClock, CheckCircle2, FileWarning, LockKeyhole, Mail, Send } from "lucide-react";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import type { DashboardActivityEvent } from "../../api/adminDashboardEventsApi";
 import { HttpError } from "../../api/http";
 import {
   assignAdminReviewCase,
@@ -14,6 +15,7 @@ import { getRevampApplicationSummary, type RevampApplicationSummary } from "../.
 import { useAuth } from "../../auth/AuthContext";
 import { AppToast } from "../../components/ui/toast";
 import { useAdminGovernanceRole } from "../../hooks/useAdminGovernanceRole";
+import { useAdminRealtimeRefresh } from "../../hooks/useAdminRealtimeRefresh";
 import { AdminCandidatureShell } from "./AdminCandidatureShell";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -69,6 +71,15 @@ function appCode(applicationId: string): string {
   return `A-${applicationId.slice(0, 8).toUpperCase()}`;
 }
 
+function shouldRefreshIntegration(event: DashboardActivityEvent, applicationId: string): boolean {
+  const key = event.eventKey ?? "";
+  return (
+    event.entityType === "REVAMP_APPLICATION"
+    && event.entityId === applicationId
+    && (key.startsWith("revamp.review.") || key.startsWith("revamp.application."))
+  );
+}
+
 export function AdminIntegrationPage() {
   const { applicationId = "" } = useParams();
   const navigate = useNavigate();
@@ -93,6 +104,8 @@ export function AdminIntegrationPage() {
   const [busy, setBusy] = useState(false);
   const [busyAction, setBusyAction] = useState<"open" | "send" | null>(null);
   const [toast, setToast] = useState<{ message: string; type: "error" | "success" } | null>(null);
+  const integrationRefreshInFlightRef = useRef(false);
+  const integrationRefreshQueuedRef = useRef(false);
 
   const normalizedAppId = applicationId.trim();
   const validAppId = UUID_PATTERN.test(normalizedAppId);
@@ -100,6 +113,7 @@ export function AdminIntegrationPage() {
   const canOpenCase = adminRole === "SUPER_ADMIN" || adminRole === "RESPONSABILE_ALBO";
   const canRequestIntegration = adminRole === "SUPER_ADMIN" || adminRole === "RESPONSABILE_ALBO" || adminRole === "REVISORE";
   const hasOpenIntegration = latestIntegrationRequest?.status === "OPEN";
+  const selectedCount = selectedCodes.size;
 
   const selectedItems = useMemo<SelectedIntegrationItem[]>(
     () =>
@@ -137,9 +151,15 @@ export function AdminIntegrationPage() {
     };
   }, [integrationDueAt, integrationMessage, selectedItems, summary]);
 
-  async function loadPage() {
+  const loadPage = useCallback(async (showLoading = true) => {
     if (!token || !validAppId) return;
-    setLoading(true);
+    if (integrationRefreshInFlightRef.current) {
+      integrationRefreshQueuedRef.current = true;
+      return;
+    }
+
+    integrationRefreshInFlightRef.current = true;
+    if (showLoading) setLoading(true);
     try {
       const [summaryData, historyData] = await Promise.all([
         getRevampApplicationSummary(normalizedAppId, token),
@@ -188,14 +208,25 @@ export function AdminIntegrationPage() {
       setHistory([]);
       setLatestIntegrationRequest(null);
     } finally {
-      setLoading(false);
+      integrationRefreshInFlightRef.current = false;
+      if (showLoading) setLoading(false);
+      if (integrationRefreshQueuedRef.current) {
+        integrationRefreshQueuedRef.current = false;
+        void loadPage(false);
+      }
     }
-  }
+  }, [normalizedAppId, token, validAppId]);
 
   useEffect(() => {
-    void loadPage();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, normalizedAppId]);
+    void loadPage(true);
+  }, [loadPage]);
+
+  useAdminRealtimeRefresh({
+    token,
+    enabled: validAppId,
+    shouldRefresh: (event) => shouldRefreshIntegration(event, normalizedAppId),
+    onRefresh: () => loadPage(false)
+  });
 
   async function onOpenCase() {
     if (!token || !validAppId || !canOpenCase || busy) return;
@@ -243,7 +274,7 @@ export function AdminIntegrationPage() {
         generatedAt: new Date().toISOString()
       });
       await requestAdminIntegration(latestCase.id, token, {
-        dueAt: integrationDueAt,
+        dueAt: `${integrationDueAt}T23:59:00`,
         message: integrationMessage.trim(),
         requestedItemsJson
       });
@@ -264,24 +295,51 @@ export function AdminIntegrationPage() {
       <section className="stack admin-integration-shell">
         {toast ? <AppToast toast={toast} onClose={() => setToast(null)} className="admin-toast" /> : null}
 
-      <div className="panel">
-        <h2><Mail className="h-5 w-5" /> Richiedi integrazione documentale</h2>
-        <p className="subtle">Application ID: {normalizedAppId || "n/d"}</p>
-        {!validAppId ? <p className="error">Application ID non valido (UUID richiesto).</p> : null}
-        {summary ? (
-          <p className="subtle">
-            Candidatura: <strong>{appCode(summary.id)}</strong> - Registro: {summary.registryType} - Stato: {summary.status}
-          </p>
-        ) : null}
-        {hasOpenIntegration ? (
-          <p className="subtle">Esiste gia una richiesta integrazione OPEN: modifica/consultazione in sola lettura.</p>
-        ) : null}
+      <div className="admin-integration-hero">
+        <div className="admin-integration-title-block">
+          <span className="admin-page-breadcrumb">Candidature / Integrazione</span>
+          <h2 className="admin-page-title">
+            <Mail className="h-5 w-5" />
+            Richiesta integrazione
+          </h2>
+          <p className="admin-page-subtitle">Prepara una richiesta chiara al fornitore: cosa manca, entro quando, e perche serve.</p>
+          {!validAppId ? <p className="error">Application ID non valido (UUID richiesto).</p> : null}
+        </div>
+        <Link
+          className="home-btn home-btn-secondary admin-action-btn admin-integration-back-icon"
+          to={`/admin/candidature/${normalizedAppId}/review`}
+          aria-label="Torna alla revisione"
+          title="Torna alla revisione"
+        >
+          <ArrowLeft className="h-4 w-4" />
+        </Link>
       </div>
 
+      {summary ? (
+        <div className="admin-integration-summary-strip">
+          <article>
+            <span>Candidatura</span>
+            <strong>{appCode(summary.id)}</strong>
+          </article>
+          <article>
+            <span>Registro</span>
+            <strong>{summary.registryType}</strong>
+          </article>
+          <article>
+            <span>Protocollo</span>
+            <strong>{summary.protocolCode ?? "Non assegnato"}</strong>
+          </article>
+          <article className={hasOpenIntegration ? "is-locked" : ""}>
+            <span>Stato richiesta</span>
+            <strong>{hasOpenIntegration ? "Gia inviata" : "Da preparare"}</strong>
+          </article>
+        </div>
+      ) : null}
+
       {!latestCase ? (
-        <div className="panel">
+        <div className="panel admin-integration-open-case">
           <p className="subtle">Nessun review case attivo per questa candidatura.</p>
-          <button type="button" className="home-btn home-btn-primary" onClick={() => void onOpenCase()} disabled={!canOpenCase || busy || loading}>
+          <button type="button" className="home-btn home-btn-primary admin-action-btn btn-with-icon btn-icon-open" onClick={() => void onOpenCase()} disabled={!canOpenCase || busy || loading}>
             <Send className="h-4 w-4" />
             {busyAction === "open" ? "Apertura case..." : "Apri/Assegna review case"}
           </button>
@@ -292,89 +350,146 @@ export function AdminIntegrationPage() {
       ) : null}
 
       {latestCase ? (
-        <form className="panel admin-integration-form" onSubmit={onSubmitIntegration}>
-          <h4>Documenti e sezioni da integrare</h4>
-          <p className="subtle">Seleziona gli elementi mancanti e aggiungi istruzioni specifiche.</p>
+        <form id="admin-integration-request-form" className="admin-integration-form" onSubmit={onSubmitIntegration}>
+          <div className="admin-integration-main">
+            <div className="admin-integration-section-head">
+              <div>
+                <h4><FileWarning className="h-4 w-4" /> Cosa deve correggere o caricare</h4>
+                <p className="subtle">Seleziona solo cio che serve. Le istruzioni sotto ogni voce finiscono nella richiesta.</p>
+              </div>
+              <span className="admin-integration-count">{selectedCount} selezionati</span>
+            </div>
 
-          <div className="admin-integration-items">
-            {ITEM_TEMPLATES.map((item) => {
-              const checked = selectedCodes.has(item.code);
-              return (
-                <article key={item.code} className={checked ? "integration-item selected" : "integration-item"}>
-                  <label className="integration-item-head">
-                    <input type="checkbox" checked={checked} onChange={() => toggleItem(item.code)} disabled={hasOpenIntegration} />
-                    <span>{item.label}</span>
-                  </label>
-                  <p className="subtle">{item.hint}</p>
+            <div className="admin-integration-items">
+              {ITEM_TEMPLATES.map((item) => {
+                const checked = selectedCodes.has(item.code);
+                return (
+                  <article
+                    key={item.code}
+                    className={checked ? "integration-item selected" : "integration-item"}
+                    role="checkbox"
+                    aria-checked={checked}
+                    tabIndex={hasOpenIntegration ? -1 : 0}
+                    onClick={() => {
+                      if (!hasOpenIntegration) toggleItem(item.code);
+                    }}
+                    onKeyDown={(event) => {
+                      if (hasOpenIntegration) return;
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        toggleItem(item.code);
+                      }
+                    }}
+                  >
+                    <div className="integration-item-head">
+                      <span className="integration-check-visual" aria-hidden="true">
+                        {checked ? <CheckCircle2 className="h-4 w-4" /> : null}
+                      </span>
+                      <span>{item.label}</span>
+                      <span className={checked ? "integration-select-badge selected" : "integration-select-badge"}>
+                        {checked ? "Selezionato" : "Richiedi"}
+                      </span>
+                    </div>
+                    <p className="subtle">{item.hint}</p>
+                    <input
+                      className="floating-input integration-item-input"
+                      value={instructions[item.code]}
+                      onChange={(event) =>
+                        setInstructions((prev) => ({
+                          ...prev,
+                          [item.code]: event.target.value
+                        }))
+                      }
+                      onClick={(event) => event.stopPropagation()}
+                      onKeyDown={(event) => event.stopPropagation()}
+                      placeholder="Aggiungi istruzione specifica"
+                      disabled={!checked || hasOpenIntegration}
+                    />
+                  </article>
+                );
+              })}
+            </div>
+
+            <div className="admin-integration-meta-panel">
+              <div className="admin-integration-section-head compact">
+                <div>
+                  <h4><CalendarClock className="h-4 w-4" /> Messaggio e scadenza</h4>
+                  <p className="subtle">Queste informazioni aiutano il fornitore a capire tempi e priorita.</p>
+                </div>
+              </div>
+              <div className="admin-integration-meta-grid">
+                <label className="admin-integration-field">
+                  <span>Scadenza risposta *</span>
                   <input
-                    className="floating-input integration-item-input"
-                    value={instructions[item.code]}
-                    onChange={(event) =>
-                      setInstructions((prev) => ({
-                        ...prev,
-                        [item.code]: event.target.value
-                      }))
-                    }
-                    placeholder="Aggiungi istruzione specifica"
-                    disabled={!checked || hasOpenIntegration}
+                    type="date"
+                    value={integrationDueAt}
+                    onChange={(event) => setIntegrationDueAt(event.target.value)}
+                    disabled={hasOpenIntegration}
                   />
-                </article>
-              );
-            })}
-          </div>
+                </label>
+                <label className="admin-integration-field">
+                  <span>Messaggio introduttivo *</span>
+                  <textarea
+                    rows={1}
+                    value={integrationMessage}
+                    onChange={(event) => setIntegrationMessage(event.target.value)}
+                    placeholder="Scrivi un messaggio breve e chiaro per il fornitore..."
+                    disabled={hasOpenIntegration}
+                  />
+                </label>
+              </div>
+            </div>
 
-          <div className="admin-integration-meta-grid">
-            <label className={`floating-field ${integrationDueAt ? "has-value" : ""}`}>
-              <input
-                className="floating-input"
-                type="date"
-                value={integrationDueAt}
-                onChange={(event) => setIntegrationDueAt(event.target.value)}
-                placeholder=" "
-                disabled={hasOpenIntegration}
-              />
-              <span className="floating-field-label">Scadenza risposta fornitore *</span>
-            </label>
-            <label className={`floating-field ${integrationMessage ? "has-value" : ""}`}>
-              <textarea
-                className="floating-input"
-                rows={3}
-                value={integrationMessage}
-                onChange={(event) => setIntegrationMessage(event.target.value)}
-                placeholder=" "
-                disabled={hasOpenIntegration}
-              />
-              <span className="floating-field-label">Messaggio introduttivo *</span>
-            </label>
-          </div>
+            {!canRequestIntegration && auth?.role === "ADMIN" ? (
+              <p className="subtle integration-access-note">
+                Invio integrazione disponibile solo per SUPER_ADMIN, RESPONSABILE_ALBO o REVISORE.
+              </p>
+            ) : null}
 
-          <div className="admin-integration-preview">
-            <h5><CheckCircle2 className="h-4 w-4" /> Anteprima e-mail</h5>
-            <p><strong>Oggetto:</strong> {emailPreview.subject}</p>
-            <pre>{emailPreview.body}</pre>
           </div>
-
-          <div className="admin-integration-actions">
-            <Link className="home-btn home-btn-secondary" to={`/admin/candidature/${normalizedAppId}/review`}>Annulla</Link>
-            <button type="submit" className="home-btn home-btn-primary" disabled={busy || !canRequestIntegration || hasOpenIntegration}>
-              {busyAction === "send" ? "Invio richiesta..." : "Invia richiesta al fornitore"}
-            </button>
-          </div>
-
-          {!canRequestIntegration && auth?.role === "ADMIN" ? (
-            <p className="subtle integration-access-note">
-              Invio integrazione disponibile solo per SUPER_ADMIN, RESPONSABILE_ALBO o REVISORE.
-            </p>
+          {hasOpenIntegration ? (
+            <div className="admin-integration-lock-note">
+              <LockKeyhole className="h-4 w-4" />
+              <span>Richiesta gia aperta: i dati sono in sola lettura.</span>
+            </div>
           ) : null}
         </form>
       ) : null}
 
-      <div className="panel">
-        <p className="subtle" style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem" }}>
-          <AlertTriangle className="h-4 w-4" />
-          Dopo l'invio, la candidatura resta in stato integrazione fino alla risposta del fornitore.
-        </p>
-      </div>
+      {selectedItems.length > 0 ? (
+        <aside className="admin-integration-compose-popover" aria-live="polite">
+          <div className="admin-integration-compose-head">
+            <span><Mail className="h-4 w-4" /> Bozza e-mail</span>
+            <small>{selectedItems.length} voci</small>
+          </div>
+          <div className="admin-integration-compose-subject">
+            <strong>Oggetto</strong>
+            <span>{emailPreview.subject}</span>
+          </div>
+          <pre>{emailPreview.body}</pre>
+          <div className="admin-integration-compose-foot">
+            <AlertTriangle className="h-4 w-4" />
+            <span>Verifica testo e scadenza prima di inviare.</span>
+          </div>
+          <div className="admin-integration-compose-actions">
+            <button
+              type="submit"
+              form="admin-integration-request-form"
+              className="admin-integration-send-icon"
+              disabled={busy || !canRequestIntegration || hasOpenIntegration}
+              aria-label="Invia richiesta"
+              title={busyAction === "send" ? "Invio richiesta..." : "Invia richiesta"}
+            >
+              <Send className="h-4 w-4" />
+            </button>
+          </div>
+        </aside>
+      ) : latestCase && !hasOpenIntegration ? (
+        <div className="admin-integration-compose-hint" aria-live="polite">
+          <Mail className="h-4 w-4" />
+          <span>Seleziona una voce per creare l'e-mail</span>
+        </div>
+      ) : null}
       </section>
     </AdminCandidatureShell>
   );

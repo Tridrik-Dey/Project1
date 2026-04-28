@@ -7,6 +7,7 @@ spring:
     username: supplier_admin
     password: supplier_pass
   jpa:
+    open-in-view: false
     hibernate:
       ddl-auto: validate
     show-sql: false
@@ -19,8 +20,8 @@ spring:
   mail:
     host: ${MAIL_HOST:smtp.gmail.com}
     port: ${MAIL_PORT:587}
-    username: ${MAIL_USERNAME:}
-    password: ${MAIL_PASSWORD:}
+    username: ${MAIL_USERNAME:${SPRING_MAIL_USERNAME:}}
+    password: ${MAIL_PASSWORD:${SPRING_MAIL_PASSWORD:}}
     properties:
       mail:
         smtp:
@@ -29,6 +30,8 @@ spring:
             enable: true
 
 app:
+  frontend:
+    base-url: ${APP_FRONTEND_BASE_URL:http://127.0.0.1:5173}
   mail:
     fail-fast: ${MAIL_FAIL_FAST:false}
     retry:
@@ -40,6 +43,10 @@ app:
   file:
     upload-dir: D:/Project1/backend/uploads
   reminders:
+    invite-expiry:
+      enabled: ${INVITE_EXPIRY_REMINDER_ENABLED:true}
+      days-before: ${INVITE_EXPIRY_REMINDER_DAYS_BEFORE:7,1}
+      cron: ${INVITE_EXPIRY_REMINDER_CRON:0 0 9 * * *}
     document-expiry:
       days-before: 30
       cron: "0 * * * * *"
@@ -49,7 +56,7 @@ app:
   reviews:
     status-mail:
       enabled: ${REVIEW_STATUS_MAIL_ENABLED:true}
-      from: ${REVIEW_STATUS_MAIL_FROM:${app.reminders.document-expiry.mail.from:no-reply@supplierplatform.local}}
+      from: ${REVIEW_STATUS_MAIL_FROM:${spring.mail.username:no-reply@supplierplatform.local}}
   support:
     contact:
       enabled: ${SUPPORT_CONTACT_ENABLED:true}

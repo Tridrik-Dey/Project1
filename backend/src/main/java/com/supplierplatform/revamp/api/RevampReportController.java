@@ -28,7 +28,7 @@ import java.util.List;
 import java.util.UUID;
 
 @RestController
-@RequestMapping({"/api/v2/reports", "/api/reports"})
+@RequestMapping("/api/v2/reports")
 @PreAuthorize("hasRole('ADMIN')")
 @RequiredArgsConstructor
 public class RevampReportController {

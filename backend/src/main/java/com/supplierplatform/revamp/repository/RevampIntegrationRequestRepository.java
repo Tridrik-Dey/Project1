@@ -12,4 +12,5 @@ public interface RevampIntegrationRequestRepository extends JpaRepository<Revamp
     List<RevampIntegrationRequest> findByStatus(IntegrationRequestStatus status);
     RevampIntegrationRequest findFirstByReviewCaseIdAndStatusOrderByCreatedAtDesc(UUID reviewCaseId, IntegrationRequestStatus status);
     RevampIntegrationRequest findFirstByReviewCaseIdOrderByCreatedAtDesc(UUID reviewCaseId);
+    RevampIntegrationRequest findFirstByReviewCaseApplicationIdAndStatusOrderByCreatedAtDesc(UUID applicationId, IntegrationRequestStatus status);
 }

@@ -6,13 +6,19 @@ import com.supplierplatform.common.EntityNotFoundException;
 import com.supplierplatform.revamp.dto.RevampApplicationSummaryDto;
 import com.supplierplatform.revamp.dto.RevampAuditEventInputDto;
 import com.supplierplatform.revamp.enums.ApplicationStatus;
+import com.supplierplatform.revamp.enums.IntegrationRequestStatus;
 import com.supplierplatform.revamp.enums.RegistryType;
+import com.supplierplatform.revamp.enums.ReviewCaseStatus;
 import com.supplierplatform.revamp.enums.SourceChannel;
 import com.supplierplatform.revamp.mapper.RevampApplicationMapper;
 import com.supplierplatform.revamp.model.RevampApplication;
 import com.supplierplatform.revamp.model.RevampApplicationSection;
+import com.supplierplatform.revamp.model.RevampIntegrationRequest;
+import com.supplierplatform.revamp.model.RevampReviewCase;
 import com.supplierplatform.revamp.repository.RevampApplicationRepository;
 import com.supplierplatform.revamp.repository.RevampApplicationSectionRepository;
+import com.supplierplatform.revamp.repository.RevampIntegrationRequestRepository;
+import com.supplierplatform.revamp.repository.RevampReviewCaseRepository;
 import com.supplierplatform.revamp.repository.RevampInviteRepository;
 import com.supplierplatform.user.User;
 import com.supplierplatform.user.UserRepository;
@@ -45,6 +51,10 @@ class RevampApplicationServiceTest {
     @Mock
     private RevampInviteRepository inviteRepository;
     @Mock
+    private RevampReviewCaseRepository reviewCaseRepository;
+    @Mock
+    private RevampIntegrationRequestRepository integrationRequestRepository;
+    @Mock
     private UserRepository userRepository;
     @Spy
     private RevampApplicationMapper applicationMapper = new RevampApplicationMapper();
@@ -54,6 +64,8 @@ class RevampApplicationServiceTest {
     private RevampAuditService auditService;
     @Mock
     private RevampSectionPayloadValidator sectionPayloadValidator;
+    @Mock
+    private RevampAttachmentService attachmentService;
     @Spy
     private ObjectMapper objectMapper = new ObjectMapper();
 
@@ -116,6 +128,50 @@ class RevampApplicationServiceTest {
     }
 
     @Test
+    void submitIntegrationResponseClosesOpenRequestAndReturnsCaseToReview() {
+        UUID appId = UUID.randomUUID();
+        User user = new User();
+        user.setId(UUID.randomUUID());
+
+        RevampApplication app = new RevampApplication();
+        app.setId(appId);
+        app.setApplicantUser(user);
+        app.setRegistryType(RegistryType.ALBO_A);
+        app.setSourceChannel(SourceChannel.PUBLIC);
+        app.setStatus(ApplicationStatus.INTEGRATION_REQUIRED);
+        app.setCurrentRevision(1);
+        app.setProtocolCode("A-2026-1234");
+
+        RevampReviewCase reviewCase = new RevampReviewCase();
+        reviewCase.setId(UUID.randomUUID());
+        reviewCase.setApplication(app);
+        reviewCase.setStatus(ReviewCaseStatus.WAITING_SUPPLIER_RESPONSE);
+
+        RevampIntegrationRequest request = new RevampIntegrationRequest();
+        request.setId(UUID.randomUUID());
+        request.setReviewCase(reviewCase);
+        request.setStatus(IntegrationRequestStatus.OPEN);
+
+        when(applicationRepository.findById(appId)).thenReturn(Optional.of(app));
+        when(integrationRequestRepository.findFirstByReviewCaseApplicationIdAndStatusOrderByCreatedAtDesc(appId, IntegrationRequestStatus.OPEN))
+                .thenReturn(request);
+        when(applicationRepository.save(any(RevampApplication.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(integrationRequestRepository.save(any(RevampIntegrationRequest.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(reviewCaseRepository.save(any(RevampReviewCase.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        RevampApplicationSummaryDto dto = applicationService.submit(appId);
+
+        assertEquals("UNDER_REVIEW", dto.status());
+        assertEquals(IntegrationRequestStatus.ANSWERED, request.getStatus());
+        assertNotNull(request.getSupplierRespondedAt());
+        assertNotNull(request.getSupplierResponseJson());
+        assertEquals(ReviewCaseStatus.IN_PROGRESS, reviewCase.getStatus());
+        verify(integrationRequestRepository).save(request);
+        verify(reviewCaseRepository).save(reviewCase);
+        verify(auditService).append(any(RevampAuditEventInputDto.class));
+    }
+
+    @Test
     void submitThrowsIfApplicationMissing() {
         UUID appId = UUID.randomUUID();
         when(applicationRepository.findById(appId)).thenReturn(Optional.empty());
@@ -148,6 +204,7 @@ class RevampApplicationServiceTest {
                 .thenReturn(Optional.empty());
         when(sectionPayloadValidator.validateAndNormalize(eq(RegistryType.ALBO_B), eq("S2"), any(JsonNode.class), eq(true), any()))
                 .thenReturn(normalized);
+        when(attachmentService.syncAndEnrich(app, "S2", normalized)).thenReturn(normalized);
         when(applicationSectionRepository.save(any(RevampApplicationSection.class))).thenAnswer(invocation -> {
             RevampApplicationSection section = invocation.getArgument(0);
             section.setId(UUID.randomUUID());

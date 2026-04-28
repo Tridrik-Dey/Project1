@@ -4,19 +4,23 @@ import { MemoryRouter } from "react-router-dom";
 import { AdminQueuePage } from "./AdminQueuePage";
 
 const getAdminReviewQueueMock = vi.fn();
+const getAdminDecidedQueueMock = vi.fn();
 const assignAdminReviewCaseMock = vi.fn();
 
 vi.mock("../../auth/AuthContext", () => ({
   useAuth: () => ({
     auth: {
       token: "admin-token",
-      role: "ADMIN"
+      role: "ADMIN",
+      fullName: "Platform Admin",
+      email: "admin@supplierplatform.com"
     }
   })
 }));
 
 vi.mock("../../api/adminReviewApi", () => ({
   getAdminReviewQueue: (...args: unknown[]) => getAdminReviewQueueMock(...args),
+  getAdminDecidedQueue: (...args: unknown[]) => getAdminDecidedQueueMock(...args),
   assignAdminReviewCase: (...args: unknown[]) => assignAdminReviewCaseMock(...args)
 }));
 
@@ -35,7 +39,9 @@ function isoDaysAgo(days: number): string {
 describe("AdminQueuePage", () => {
   beforeEach(() => {
     getAdminReviewQueueMock.mockReset();
+    getAdminDecidedQueueMock.mockReset();
     assignAdminReviewCaseMock.mockReset();
+    getAdminDecidedQueueMock.mockResolvedValue([]);
   });
 
   it("renders queue KPIs and marks urgent rows with primary action", async () => {
@@ -103,7 +109,7 @@ describe("AdminQueuePage", () => {
     expect(screen.queryByText("APP-BBBBBBBB")).not.toBeInTheDocument();
   });
 
-  it("builds action links to review and integration routes", async () => {
+  it("builds action link to review route and hides integration row action", async () => {
     getAdminReviewQueueMock.mockResolvedValue([
       {
         id: "case-1",
@@ -121,10 +127,8 @@ describe("AdminQueuePage", () => {
     );
 
     const reviewLink = await screen.findByRole("link", { name: "Esamina" });
-    const integrationLink = screen.getByRole("link", { name: "Integrazione" });
-
     expect(reviewLink.getAttribute("href")).toContain("/admin/candidature/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/review");
-    expect(integrationLink.getAttribute("href")).toContain("/admin/candidature/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/integration");
+    expect(screen.queryByRole("link", { name: "Integrazione" })).not.toBeInTheDocument();
   });
 
   it("allows taking in charge for pending cases", async () => {
@@ -185,6 +189,57 @@ describe("AdminQueuePage", () => {
       </MemoryRouter>
     );
 
-    expect(await screen.findByText(/ON_TRACK/i)).toBeInTheDocument();
+    expect(await screen.findByText(/IN TEMPO/i)).toBeInTheDocument();
+  });
+
+  it("does not mark a newly assigned case with an SLA as supplier responded", async () => {
+    getAdminReviewQueueMock.mockResolvedValue([
+      {
+        id: "case-assigned",
+        applicationId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+        status: "IN_PROGRESS",
+        decision: null,
+        assignedToDisplayName: "Admin Test",
+        slaDueAt: "2099-01-02T00:00:00Z",
+        latestIntegrationRequestStatus: null,
+        latestIntegrationSupplierRespondedAt: null,
+        updatedAt: isoDaysAgo(0)
+      }
+    ]);
+
+    render(
+      <MemoryRouter>
+        <AdminQueuePage />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText("APP-EEEEEEEE")).toBeInTheDocument();
+    expect(screen.getAllByText("Presa in carico").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Risposta ricevuta")).not.toBeInTheDocument();
+  });
+
+  it("shows supplier response only from an answered integration request", async () => {
+    getAdminReviewQueueMock.mockResolvedValue([
+      {
+        id: "case-answered",
+        applicationId: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+        status: "IN_PROGRESS",
+        decision: null,
+        assignedToDisplayName: "Admin Test",
+        slaDueAt: "2099-01-02T00:00:00Z",
+        latestIntegrationRequestStatus: "ANSWERED",
+        latestIntegrationSupplierRespondedAt: new Date().toISOString(),
+        updatedAt: isoDaysAgo(0)
+      }
+    ]);
+
+    render(
+      <MemoryRouter>
+        <AdminQueuePage />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText("APP-FFFFFFFF")).toBeInTheDocument();
+    expect(screen.getAllByText("Risposta ricevuta")).toHaveLength(1);
   });
 });

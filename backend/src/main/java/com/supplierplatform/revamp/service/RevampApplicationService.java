@@ -8,14 +8,20 @@ import com.supplierplatform.revamp.dto.RevampApplicationSummaryDto;
 import com.supplierplatform.revamp.dto.RevampAuditEventInputDto;
 import com.supplierplatform.revamp.dto.RevampSectionSnapshotDto;
 import com.supplierplatform.revamp.enums.ApplicationStatus;
+import com.supplierplatform.revamp.enums.IntegrationRequestStatus;
 import com.supplierplatform.revamp.enums.RegistryType;
+import com.supplierplatform.revamp.enums.ReviewCaseStatus;
 import com.supplierplatform.revamp.enums.SourceChannel;
 import com.supplierplatform.revamp.mapper.RevampApplicationMapper;
 import com.supplierplatform.revamp.model.RevampApplication;
 import com.supplierplatform.revamp.model.RevampApplicationSection;
+import com.supplierplatform.revamp.model.RevampIntegrationRequest;
+import com.supplierplatform.revamp.model.RevampReviewCase;
 import com.supplierplatform.revamp.model.RevampInvite;
 import com.supplierplatform.revamp.repository.RevampApplicationRepository;
 import com.supplierplatform.revamp.repository.RevampApplicationSectionRepository;
+import com.supplierplatform.revamp.repository.RevampIntegrationRequestRepository;
+import com.supplierplatform.revamp.repository.RevampReviewCaseRepository;
 import com.supplierplatform.revamp.repository.RevampInviteRepository;
 import com.supplierplatform.user.User;
 import com.supplierplatform.user.UserRepository;
@@ -34,6 +40,8 @@ public class RevampApplicationService {
     private final RevampApplicationRepository applicationRepository;
     private final RevampApplicationSectionRepository applicationSectionRepository;
     private final RevampInviteRepository inviteRepository;
+    private final RevampReviewCaseRepository reviewCaseRepository;
+    private final RevampIntegrationRequestRepository integrationRequestRepository;
     private final UserRepository userRepository;
     private final RevampApplicationMapper applicationMapper;
     private final RevampProtocolCodeService protocolCodeService;
@@ -78,7 +86,7 @@ public class RevampApplicationService {
                 null,
                 "{\"status\":null}",
                 "{\"status\":\"DRAFT\"}",
-                "{\"source\":\"" + sourceChannel.name() + "\"}"
+                "{\"source\":\"" + sourceChannel.name() + "\",\"applicantName\":\"" + esc(applicant.getFullName()) + "\"}"
         ));
         return applicationMapper.toSummary(saved);
     }
@@ -179,7 +187,12 @@ public class RevampApplicationService {
             throw new IllegalStateException("Application cannot be submitted from status: " + status);
         }
 
-        application.setStatus(ApplicationStatus.SUBMITTED);
+        if (status == ApplicationStatus.INTEGRATION_REQUIRED) {
+            closeOpenIntegrationRequest(application);
+            application.setStatus(ApplicationStatus.UNDER_REVIEW);
+        } else {
+            application.setStatus(ApplicationStatus.SUBMITTED);
+        }
         application.setSubmittedAt(LocalDateTime.now());
         if (application.getProtocolCode() == null || application.getProtocolCode().isBlank()) {
             application.setProtocolCode(protocolCodeService.nextProtocolCode(application.getRegistryType()));
@@ -199,9 +212,38 @@ public class RevampApplicationService {
                 null,
                 "{\"status\":\"" + beforeStatus.name() + "\"}",
                 "{\"status\":\"" + saved.getStatus().name() + "\"}",
-                "{\"protocolCode\":\"" + saved.getProtocolCode() + "\"}"
+                "{\"protocolCode\":\"" + saved.getProtocolCode() + "\",\"applicantName\":\"" + esc(saved.getApplicantUser() != null ? saved.getApplicantUser().getFullName() : "") + "\"}"
         ));
         return applicationMapper.toSummary(saved);
+    }
+
+    private void closeOpenIntegrationRequest(RevampApplication application) {
+        RevampIntegrationRequest openRequest = integrationRequestRepository
+                .findFirstByReviewCaseApplicationIdAndStatusOrderByCreatedAtDesc(application.getId(), IntegrationRequestStatus.OPEN);
+        if (openRequest == null) return;
+
+        openRequest.setStatus(IntegrationRequestStatus.ANSWERED);
+        openRequest.setSupplierRespondedAt(LocalDateTime.now());
+        openRequest.setSupplierResponseJson(objectMapper.createObjectNode()
+                .put("applicationId", application.getId().toString())
+                .put("submittedAt", LocalDateTime.now().toString()));
+        integrationRequestRepository.save(openRequest);
+
+        RevampReviewCase reviewCase = openRequest.getReviewCase();
+        if (reviewCase != null && reviewCase.getStatus() == ReviewCaseStatus.WAITING_SUPPLIER_RESPONSE) {
+            reviewCase.setStatus(ReviewCaseStatus.IN_PROGRESS);
+            reviewCase.setDecision(null);
+            reviewCase.setVerifiedAt(null);
+            reviewCase.setVerificationOutcome(null);
+            reviewCase.setVerificationNote(null);
+            reviewCase.setVerifiedByUser(null);
+            reviewCaseRepository.save(reviewCase);
+        }
+    }
+
+    private static String esc(String s) {
+        if (s == null) return "";
+        return s.replace("\\", "\\\\").replace("\"", "\\\"");
     }
 
     private RevampApplication getApplication(UUID applicationId) {

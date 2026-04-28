@@ -1,5 +1,4 @@
 import { apiBinaryRequest, apiRequest } from "./http";
-import { resolveApiPath } from "./pathResolver";
 
 export interface AdminReportKpis {
   totalSuppliers: number;
@@ -58,6 +57,8 @@ export interface AdminReportFilters {
   exportFormat?: "xlsx" | "pdf";
 }
 
+const BASE = "/api/v2/reports";
+
 function buildReportQuery(filters: AdminReportFilters = {}): string {
   const params = new URLSearchParams();
   if (typeof filters.year === "number") params.set("year", String(filters.year));
@@ -73,31 +74,15 @@ function buildReportQuery(filters: AdminReportFilters = {}): string {
 }
 
 export function getAdminReportKpis(token: string): Promise<AdminReportKpis> {
-  const path = resolveApiPath({
-    feature: "adminV2",
-    legacyPath: "/api/reports/kpis",
-    revampPath: "/api/v2/reports/kpis"
-  });
-  return apiRequest<AdminReportKpis>(path, {}, token);
+  return apiRequest<AdminReportKpis>(`${BASE}/kpis`, {}, token);
 }
 
 export function getAdminReportAnalytics(token: string, filters: AdminReportFilters = {}): Promise<AdminReportAnalytics> {
-  const query = buildReportQuery(filters);
-  const path = resolveApiPath({
-    feature: "adminV2",
-    legacyPath: `/api/reports/analytics${query}`,
-    revampPath: `/api/v2/reports/analytics${query}`
-  });
-  return apiRequest<AdminReportAnalytics>(path, {}, token);
+  return apiRequest<AdminReportAnalytics>(`${BASE}/analytics${buildReportQuery(filters)}`, {}, token);
 }
 
 export function exportAdminKpisReport(token: string): Promise<{ blob: Blob; filename: string }> {
-  const path = resolveApiPath({
-    feature: "adminV2",
-    legacyPath: "/api/reports/export?type=kpis",
-    revampPath: "/api/v2/reports/export?type=kpis"
-  });
-  return apiBinaryRequest(path, { method: "GET" }, token);
+  return apiBinaryRequest(`${BASE}/export?type=kpis`, { method: "GET" }, token);
 }
 
 export function exportAdminReportExcel(
@@ -114,12 +99,7 @@ export function exportAdminReportExcel(
   if (filters.category) query.set("category", filters.category);
   if (filters.profileStatus) query.set("profileStatus", filters.profileStatus);
   if (filters.ratingBand) query.set("ratingBand", filters.ratingBand);
-  const path = resolveApiPath({
-    feature: "adminV2",
-    legacyPath: `/api/reports/export?${query.toString()}`,
-    revampPath: `/api/v2/reports/export?${query.toString()}`
-  });
-  return apiBinaryRequest(path, { method: "GET" }, token);
+  return apiBinaryRequest(`${BASE}/export?${query.toString()}`, { method: "GET" }, token);
 }
 
 export interface AdminSearchExportParams {
@@ -139,10 +119,5 @@ export function exportAdminSearchReport(
   if (params.fields?.length) {
     params.fields.forEach((field) => query.append("fields", field));
   }
-  const path = resolveApiPath({
-    feature: "adminV2",
-    legacyPath: `/api/reports/export?${query.toString()}`,
-    revampPath: `/api/v2/reports/export?${query.toString()}`
-  });
-  return apiBinaryRequest(path, { method: "GET" }, token);
+  return apiBinaryRequest(`${BASE}/export?${query.toString()}`, { method: "GET" }, token);
 }

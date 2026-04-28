@@ -12,6 +12,7 @@ public record RevampSupplierProfileDto(
         UUID id,
         UUID applicationId,
         UUID supplierUserId,
+        String supplierEmail,
         RegistryType registryType,
         RegistryProfileStatus status,
         String displayName,

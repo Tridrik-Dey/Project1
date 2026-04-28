@@ -347,6 +347,21 @@ export function SupplierDashboardPage({ initialStep = "profile" }: SupplierDashb
     return Math.max(0, Math.min(100, Math.round((elapsedDays / 365) * 100)));
   })();
 
+  const revampStatusLabel = (() => {
+    const status = (revampSession?.status ?? "").toUpperCase();
+    if (status === "INVITED") return "Invitata";
+    if (status === "DRAFT") return "Bozza";
+    if (status === "SUBMITTED") return "Inviata";
+    if (status === "UNDER_REVIEW") return "In revisione";
+    if (status === "INTEGRATION_REQUIRED") return "Integrazione richiesta";
+    if (status === "APPROVED") return "Approvata";
+    if (status === "REJECTED") return "Rigettata";
+    if (status === "SUSPENDED") return "Sospesa";
+    if (status === "RENEWAL_DUE") return "Rinnovo richiesto";
+    if (status === "ARCHIVED") return "Archiviata";
+    return "Bozza";
+  })();
+
   const profileStatusLabel = (() => {
     const status = (dashboard.profile?.status ?? "").toLowerCase();
     if (!status) return "N/D";
@@ -438,7 +453,7 @@ export function SupplierDashboardPage({ initialStep = "profile" }: SupplierDashb
           {revampSession ? (
             <>
               <p>
-                Stato: <strong>{revampSession.status ?? "DRAFT"}</strong>
+                Stato: <strong>{revampStatusLabel}</strong>
                 {revampSession.protocolCode ? ` · Protocollo: ${revampSession.protocolCode}` : ""}
               </p>
               <p className="subtle">

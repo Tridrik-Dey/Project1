@@ -12,7 +12,8 @@ public record RevampAdminUserRoleDto(
         String fullName,
         UserRole userRole,
         boolean active,
+        boolean archived,
+        AdminAccountStatus accountStatus,
         List<AdminRole> adminRoles
 ) {
 }
-

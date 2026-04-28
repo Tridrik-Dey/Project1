@@ -126,16 +126,5 @@ class RevampNotificationControllerContractTest {
                 .andExpect(jsonPath("$.data[0].deliveryStatus").value("SENT"));
     }
 
-    @Test
-    void templatesAliasPathReturnsExpectedContract() throws Exception {
-        when(notificationEventService.getTemplates()).thenReturn(List.of(
-                new NotificationTemplateDto("invite_created", "Hello {{name}}")
-        ));
-
-        mockMvc.perform(get("/api/notifications/templates"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.success").value(true))
-                .andExpect(jsonPath("$.data[0].key").value("invite_created"));
-    }
 }
 

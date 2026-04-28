@@ -14,6 +14,7 @@ public final class RevampTableNames {
     public static final String INTEGRATION_REQUESTS = "integration_requests";
     public static final String SUPPLIER_REGISTRY_PROFILES = "supplier_registry_profiles";
     public static final String SUPPLIER_REGISTRY_PROFILE_DETAILS = "supplier_registry_profile_details";
+    public static final String SUPPLIER_EVALUATOR_ASSIGNMENTS = "supplier_evaluator_assignments";
     public static final String EVALUATIONS = "evaluations";
     public static final String EVALUATION_DIMENSIONS = "evaluation_dimensions";
     public static final String NOTIFICATION_EVENTS = "notification_events";

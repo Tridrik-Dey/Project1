@@ -14,10 +14,10 @@ public record RevampInviteListRowDto(
         LocalDateTime createdAt,
         LocalDateTime expiresAt,
         String invitedByName,
+        String note,
         UUID applicationId,
         String profilePath,
         boolean canRenew,
         boolean canOpenProfile
 ) {
 }
-

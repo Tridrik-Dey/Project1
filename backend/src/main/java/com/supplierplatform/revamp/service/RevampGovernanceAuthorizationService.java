@@ -10,6 +10,7 @@ import com.supplierplatform.user.UserRole;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.EnumSet;
@@ -41,7 +42,7 @@ public class RevampGovernanceAuthorizationService {
         return actorRole;
     }
 
-    @Transactional(readOnly = true)
+    @Transactional(readOnly = true, propagation = Propagation.REQUIRES_NEW)
     public AdminRole resolveAdminGovernanceRole(UUID actorUserId) {
         if (actorUserId == null) {
             throw new AccessDeniedException("Access denied");

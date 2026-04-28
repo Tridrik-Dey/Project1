@@ -1,4 +1,4 @@
-import { createContext, useContext, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import type { AuthResponse } from "../types/api";
 import { clearAuthState, loadAuthState, saveAuthState, type AuthState } from "../utils/storage";
@@ -16,6 +16,17 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [auth, setAuth] = useState<AuthState | null>(() => loadAuthState());
 
+  const logout = useCallback(() => {
+    setAuth(null);
+    clearAuthState();
+    clearRevampEmailVerified();
+  }, []);
+
+  useEffect(() => {
+    window.addEventListener("auth:expired", logout);
+    return () => window.removeEventListener("auth:expired", logout);
+  }, [logout]);
+
   const value = useMemo<AuthContextValue>(() => ({
     auth,
     isAuthenticated: Boolean(auth?.token),
@@ -25,17 +36,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         userId: response.userId,
         email: response.email,
         fullName: response.fullName,
-        role: response.role
+        role: response.role,
+        adminGovernanceRole: response.adminGovernanceRole
       };
       setAuth(next);
       saveAuthState(next);
     },
-    logout: () => {
-      setAuth(null);
-      clearAuthState();
-      clearRevampEmailVerified();
-    }
-  }), [auth]);
+    logout
+  }), [auth, logout]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

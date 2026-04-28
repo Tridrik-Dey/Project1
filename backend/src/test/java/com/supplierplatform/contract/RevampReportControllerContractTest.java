@@ -99,15 +99,5 @@ class RevampReportControllerContractTest {
                 .andExpect(content().bytes(excel));
     }
 
-    @Test
-    void kpisAliasPathReturnsExpectedContract() throws Exception {
-        when(reportService.getKpis()).thenReturn(new RevampReportKpisDto(100, 70, 12, 8, 5));
-
-        mockMvc.perform(get("/api/reports/kpis"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.success").value(true))
-                .andExpect(jsonPath("$.data.totalSuppliers").value(100))
-                .andExpect(jsonPath("$.data.pendingInvites").value(5));
-    }
 }
 

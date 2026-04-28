@@ -5,6 +5,7 @@ import com.supplierplatform.review.ValidationReviewRepository;
 import com.supplierplatform.revamp.dto.RevampApplicationSummaryDto;
 import com.supplierplatform.revamp.enums.AdminRole;
 import com.supplierplatform.revamp.enums.InviteStatus;
+import com.supplierplatform.revamp.enums.VerificationOutcome;
 import com.supplierplatform.revamp.enums.RegistryType;
 import com.supplierplatform.revamp.enums.SourceChannel;
 import com.supplierplatform.revamp.model.RevampApplication;
@@ -355,6 +356,7 @@ class RevampWorkflowIntegrationTest {
 
         applicationService.submit(draft.id());
         var reviewCase = reviewWorkflowService.openCase(draft.id(), admin.getId(), LocalDateTime.now().plusDays(5));
+        reviewWorkflowService.verifyCase(reviewCase.id(), admin.getId(), null, VerificationOutcome.COMPLIANT);
         reviewWorkflowService.decide(reviewCase.id(), com.supplierplatform.revamp.enums.ReviewDecision.APPROVED, "ok", admin.getId());
 
         var profile = supplierRegistryProfileRepository.findByApplicationId(draft.id()).orElseThrow();
@@ -861,6 +863,7 @@ class RevampWorkflowIntegrationTest {
         applicationService.submit(draft.id());
 
         var reviewCase = reviewWorkflowService.openCase(draft.id(), admin.getId(), LocalDateTime.now().plusDays(5));
+        reviewWorkflowService.verifyCase(reviewCase.id(), admin.getId(), "Documentazione da integrare", VerificationOutcome.INCOMPLETE);
         var updated = reviewWorkflowService.requestIntegration(
                 reviewCase.id(),
                 admin.getId(),
@@ -964,6 +967,7 @@ class RevampWorkflowIntegrationTest {
 
         applicationService.submit(draft.id());
         var reviewCase = reviewWorkflowService.openCase(draft.id(), adminUserId, LocalDateTime.now().plusDays(5));
+        reviewWorkflowService.verifyCase(reviewCase.id(), adminUserId, null, VerificationOutcome.COMPLIANT);
         reviewWorkflowService.decide(reviewCase.id(), com.supplierplatform.revamp.enums.ReviewDecision.APPROVED, "ok", adminUserId);
         return draft;
     }

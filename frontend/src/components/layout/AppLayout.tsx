@@ -66,6 +66,10 @@ export function AppLayout({ children }: { children: ReactNode }) {
     navigate("/?support=1");
   };
 
+  if (location.pathname.startsWith("/admin")) {
+    return <>{children}</>;
+  }
+
   return (
     <div className="app-shell">
       <header className={`topbar ${isHeaderScrolled ? "is-scrolled" : ""}`} onMouseEnter={handleTopbarMouseEnter}>

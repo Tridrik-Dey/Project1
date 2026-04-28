@@ -6,6 +6,8 @@ import { AdminInvitesPage } from "./AdminInvitesPage";
 const getAdminInviteMonitorMock = vi.fn();
 const renewAdminInviteMock = vi.fn();
 const createAdminInviteMock = vi.fn();
+const resendAdminInviteMock = vi.fn();
+const updateAdminInviteMock = vi.fn();
 
 vi.mock("../../auth/AuthContext", () => ({
   useAuth: () => ({
@@ -28,7 +30,9 @@ vi.mock("../../hooks/useAdminGovernanceRole", () => ({
 vi.mock("../../api/adminInviteApi", () => ({
   getAdminInviteMonitor: (...args: unknown[]) => getAdminInviteMonitorMock(...args),
   renewAdminInvite: (...args: unknown[]) => renewAdminInviteMock(...args),
-  createAdminInvite: (...args: unknown[]) => createAdminInviteMock(...args)
+  createAdminInvite: (...args: unknown[]) => createAdminInviteMock(...args),
+  resendAdminInvite: (...args: unknown[]) => resendAdminInviteMock(...args),
+  updateAdminInvite: (...args: unknown[]) => updateAdminInviteMock(...args)
 }));
 
 describe("AdminInvitesPage", () => {
@@ -36,6 +40,8 @@ describe("AdminInvitesPage", () => {
     getAdminInviteMonitorMock.mockReset();
     renewAdminInviteMock.mockReset();
     createAdminInviteMock.mockReset();
+    resendAdminInviteMock.mockReset();
+    updateAdminInviteMock.mockReset();
   });
 
   it("renders invite KPIs and monitor rows in manage mode", async () => {
@@ -70,10 +76,10 @@ describe("AdminInvitesPage", () => {
       </MemoryRouter>
     );
 
-    expect(await screen.findByText("Gestione Inviti")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Inviti" })).toBeInTheDocument();
     expect(screen.getByText("12")).toBeInTheDocument();
     expect(screen.getByText("Bianchi Marco")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Profilo" })).toHaveAttribute("href", "/admin/candidature/app-1/review");
+    expect(screen.getByLabelText("Avanzamento 100%")).toBeInTheDocument();
   });
 
   it("renews expired invites and creates a new invite in new mode", async () => {
@@ -126,7 +132,8 @@ describe("AdminInvitesPage", () => {
     );
 
     await screen.findByText("Gamma SRL");
-    await user.click(screen.getByRole("button", { name: "Rinnova" }));
+    await user.click(screen.getByRole("button", { name: /Gamma SRL/ }));
+    await user.click(await screen.findByRole("button", { name: "Rinnova invito" }));
     await waitFor(() => expect(renewAdminInviteMock).toHaveBeenCalledWith("invite-expired", "admin-token", { expiresInDays: 30 }));
 
     render(

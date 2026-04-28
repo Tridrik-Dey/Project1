@@ -1,4 +1,3 @@
-import { resolveApiPath } from "./pathResolver";
 import { apiRequest } from "./http";
 
 export type RevampRegistryType = "ALBO_A" | "ALBO_B";
@@ -50,18 +49,14 @@ export interface OtpChallengeVerifyResponse {
   verifiedAt: string | null;
 }
 
+const BASE = "/api/v2/applications";
+
 export function createRevampApplicationDraft(
   payload: CreateRevampApplicationDraftRequest,
   token: string
 ): Promise<RevampApplicationSummary> {
-  const path = resolveApiPath({
-    legacyPath: "/api/applications",
-    revampPath: "/api/v2/applications",
-    feature: "newWizardAb"
-  });
-
   return apiRequest<RevampApplicationSummary>(
-    path,
+    BASE,
     {
       method: "POST",
       body: JSON.stringify(payload)
@@ -74,38 +69,20 @@ export function getRevampApplicationSummary(
   applicationId: string,
   token: string
 ): Promise<RevampApplicationSummary> {
-  const basePath = resolveApiPath({
-    legacyPath: "/api/applications",
-    revampPath: "/api/v2/applications",
-    feature: "newWizardAb"
-  });
-
-  return apiRequest<RevampApplicationSummary>(`${basePath}/${applicationId}`, {}, token);
+  return apiRequest<RevampApplicationSummary>(`${BASE}/${applicationId}`, {}, token);
 }
 
 export function getMyLatestRevampApplication(
   token: string
 ): Promise<RevampApplicationSummary | null> {
-  const basePath = resolveApiPath({
-    legacyPath: "/api/applications",
-    revampPath: "/api/v2/applications",
-    feature: "newWizardAb"
-  });
-
-  return apiRequest<RevampApplicationSummary | null>(`${basePath}/me/latest`, {}, token);
+  return apiRequest<RevampApplicationSummary | null>(`${BASE}/me/latest`, {}, token);
 }
 
 export function getRevampApplicationSections(
   applicationId: string,
   token: string
 ): Promise<RevampSectionSnapshot[]> {
-  const basePath = resolveApiPath({
-    legacyPath: "/api/applications",
-    revampPath: "/api/v2/applications",
-    feature: "newWizardAb"
-  });
-
-  return apiRequest<RevampSectionSnapshot[]>(`${basePath}/${applicationId}/sections`, {}, token);
+  return apiRequest<RevampSectionSnapshot[]>(`${BASE}/${applicationId}/sections`, {}, token);
 }
 
 export function saveRevampApplicationSection(
@@ -115,14 +92,8 @@ export function saveRevampApplicationSection(
   completed: boolean,
   token: string
 ): Promise<RevampSectionSnapshot> {
-  const basePath = resolveApiPath({
-    legacyPath: "/api/applications",
-    revampPath: "/api/v2/applications",
-    feature: "newWizardAb"
-  });
-
   return apiRequest<RevampSectionSnapshot>(
-    `${basePath}/${applicationId}/sections/${encodeURIComponent(sectionKey)}`,
+    `${BASE}/${applicationId}/sections/${encodeURIComponent(sectionKey)}`,
     {
       method: "PUT",
       body: JSON.stringify({
@@ -138,14 +109,8 @@ export function submitRevampApplication(
   applicationId: string,
   token: string
 ): Promise<RevampApplicationSummary> {
-  const basePath = resolveApiPath({
-    legacyPath: "/api/applications",
-    revampPath: "/api/v2/applications",
-    feature: "newWizardAb"
-  });
-
   return apiRequest<RevampApplicationSummary>(
-    `${basePath}/${applicationId}/submit`,
+    `${BASE}/${applicationId}/submit`,
     { method: "POST" },
     token
   );
@@ -155,13 +120,8 @@ export function sendDeclarationOtpChallenge(
   applicationId: string,
   token: string
 ): Promise<OtpChallengeDispatchResponse> {
-  const path = resolveApiPath({
-    legacyPath: "/api/otp-challenges/declaration/send",
-    revampPath: "/api/v2/otp-challenges/declaration/send",
-    feature: "newWizardAb"
-  });
   return apiRequest<OtpChallengeDispatchResponse>(
-    path,
+    "/api/v2/otp-challenges/declaration/send",
     {
       method: "POST",
       body: JSON.stringify({ applicationId })
@@ -175,13 +135,8 @@ export function verifyDeclarationOtpChallenge(
   otpCode: string,
   token: string
 ): Promise<OtpChallengeVerifyResponse> {
-  const path = resolveApiPath({
-    legacyPath: "/api/otp-challenges/declaration/verify",
-    revampPath: "/api/v2/otp-challenges/declaration/verify",
-    feature: "newWizardAb"
-  });
   return apiRequest<OtpChallengeVerifyResponse>(
-    path,
+    "/api/v2/otp-challenges/declaration/verify",
     {
       method: "POST",
       body: JSON.stringify({ challengeId, otpCode })

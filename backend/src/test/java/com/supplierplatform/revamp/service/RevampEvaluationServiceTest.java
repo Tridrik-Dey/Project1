@@ -2,6 +2,7 @@ package com.supplierplatform.revamp.service;
 
 import com.supplierplatform.revamp.dto.RevampEvaluationSummaryDto;
 import com.supplierplatform.revamp.mapper.RevampEvaluationMapper;
+import com.supplierplatform.revamp.service.RevampAuditService;
 import com.supplierplatform.revamp.model.RevampEvaluation;
 import com.supplierplatform.revamp.model.RevampEvaluationDimension;
 import com.supplierplatform.revamp.model.RevampSupplierRegistryProfile;
@@ -39,6 +40,10 @@ class RevampEvaluationServiceTest {
     private RevampSupplierRegistryProfileRepository supplierRegistryProfileRepository;
     @Mock
     private UserRepository userRepository;
+    @Mock
+    private RevampEvaluationAssignmentService evaluationAssignmentService;
+    @Mock
+    private RevampAuditService auditService;
     @Spy
     private RevampEvaluationMapper evaluationMapper = new RevampEvaluationMapper();
 
@@ -64,6 +69,11 @@ class RevampEvaluationServiceTest {
             RevampEvaluation e = invocation.getArgument(0);
             e.setId(UUID.randomUUID());
             return e;
+        });
+        when(evaluationRepository.findById(any(UUID.class))).thenAnswer(invocation -> {
+            RevampEvaluation e = new RevampEvaluation();
+            e.setId(invocation.getArgument(0));
+            return Optional.of(e);
         });
         when(evaluationDimensionRepository.save(any(RevampEvaluationDimension.class))).thenAnswer(invocation -> invocation.getArgument(0));
 

@@ -83,8 +83,8 @@ describe("AdminIntegrationPage", () => {
     const user = userEvent.setup();
     renderPage();
 
-    await screen.findByText("Richiedi integrazione documentale");
-    await user.click(screen.getByLabelText("Documento di identita"));
+    await screen.findByText("Cosa deve correggere o caricare");
+    await user.click(screen.getByRole("checkbox", { name: /Documento di identita/i }));
     const firstEnabledInstruction = screen.getAllByPlaceholderText("Aggiungi istruzione specifica").find((input) => !(input as HTMLInputElement).disabled);
     if (!firstEnabledInstruction) throw new Error("Enabled instruction input not found");
     await user.type(firstEnabledInstruction, "Inviare fronte e retro.");
@@ -125,14 +125,14 @@ describe("AdminIntegrationPage", () => {
     const user = userEvent.setup();
     renderPage();
 
-    await screen.findByText("Documenti e sezioni da integrare");
-    await user.click(screen.getByLabelText("Documento di identita"));
+    await screen.findByText("Cosa deve correggere o caricare");
+    await user.click(screen.getByRole("checkbox", { name: /Documento di identita/i }));
     const firstEnabledInstruction = screen.getAllByPlaceholderText("Aggiungi istruzione specifica").find((input) => !(input as HTMLInputElement).disabled);
     if (!firstEnabledInstruction) throw new Error("Enabled instruction input not found");
     await user.type(firstEnabledInstruction, "Upload PDF leggibile.");
-    await user.type(screen.getByLabelText("Scadenza risposta fornitore *"), "2026-04-30");
+    await user.type(screen.getByLabelText("Scadenza risposta *"), "2026-04-30");
     await user.type(screen.getByLabelText("Messaggio introduttivo *"), "Integrare entro la scadenza indicata.");
-    await user.click(screen.getByRole("button", { name: "Invia richiesta al fornitore" }));
+    await user.click(screen.getByRole("button", { name: "Invia richiesta" }));
 
     await waitFor(() => {
       expect(requestIntegrationMock).toHaveBeenCalled();
@@ -141,7 +141,7 @@ describe("AdminIntegrationPage", () => {
     const args = requestIntegrationMock.mock.calls[0];
     expect(args[0]).toBe("case-send");
     expect(args[1]).toBe("admin-token");
-    expect(args[2].dueAt).toBe("2026-04-30");
+    expect(args[2].dueAt).toBe("2026-04-30T23:59:00");
     expect(args[2].message).toContain("Integrare entro la scadenza");
     expect(args[2].requestedItemsJson).toContain("ID_DOCUMENT");
     expect(args[2].requestedItemsJson).toContain("Upload PDF leggibile.");
@@ -182,7 +182,7 @@ describe("AdminIntegrationPage", () => {
     });
 
     renderPage();
-    expect(await screen.findByText(/richiesta integrazione OPEN/i)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Invia richiesta al fornitore" })).toBeDisabled();
+    expect(await screen.findByText(/Richiesta gia aperta/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Invia richiesta" })).toBeDisabled();
   });
 });

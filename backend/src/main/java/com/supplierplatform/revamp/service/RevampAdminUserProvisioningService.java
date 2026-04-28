@@ -2,9 +2,11 @@ package com.supplierplatform.revamp.service;
 
 import com.supplierplatform.common.EntityNotFoundException;
 import com.supplierplatform.revamp.dto.AdminUserInviteDto;
+import com.supplierplatform.revamp.enums.AdminRole;
 import com.supplierplatform.user.User;
 import com.supplierplatform.user.UserRepository;
 import com.supplierplatform.user.UserService;
+import com.supplierplatform.user.UserRole;
 import com.supplierplatform.validation.EmailValidators;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -26,7 +28,7 @@ public class RevampAdminUserProvisioningService {
     public AdminUserInviteDto inviteAdminUser(
             String email,
             String fullName,
-            com.supplierplatform.revamp.enums.AdminRole adminRole,
+            AdminRole adminRole,
             int expiresInDays,
             UUID actorUserId
     ) {
@@ -60,6 +62,49 @@ public class RevampAdminUserProvisioningService {
                 invited.getFullName(),
                 adminRole,
                 invited.getInviteExpiresAt(),
+                dispatch.sent(),
+                dispatch.activationUrl()
+        );
+    }
+
+    @Transactional
+    public AdminUserInviteDto resendAdminUserInvite(UUID targetUserId, int expiresInDays, UUID actorUserId) {
+        adminRoleService.requireSuperAdmin(actorUserId);
+        User target = userRepository.findById(targetUserId)
+                .orElseThrow(() -> new EntityNotFoundException("User", targetUserId));
+        if (target.getRole() != UserRole.ADMIN) {
+            throw new IllegalArgumentException("Only ADMIN users can receive admin invites");
+        }
+        if (target.getDeletedAt() != null) {
+            throw new IllegalStateException("Archived admin users cannot receive a new invite");
+        }
+        if (Boolean.TRUE.equals(target.getIsActive()) || target.getInviteToken() == null) {
+            throw new IllegalStateException("Only pending admin invites can be resent");
+        }
+
+        AdminRole adminRole = adminRoleService.listByUser(targetUserId).stream()
+                .findFirst()
+                .map(role -> role.getAdminRole())
+                .orElseThrow(() -> new IllegalStateException("Pending admin invite has no governance role"));
+
+        target.setInviteToken(UUID.randomUUID().toString());
+        target.setInviteExpiresAt(LocalDateTime.now().plusDays(Math.max(1, Math.min(expiresInDays, 30))));
+        User saved = userRepository.save(target);
+
+        AdminUserInviteDto draft = new AdminUserInviteDto(
+                saved.getId(),
+                saved.getEmail(),
+                saved.getFullName(),
+                adminRole,
+                saved.getInviteExpiresAt()
+        );
+        RevampAdminInviteMailService.InviteDispatchResult dispatch = inviteMailService.sendInvite(draft, saved.getInviteToken());
+        return new AdminUserInviteDto(
+                saved.getId(),
+                saved.getEmail(),
+                saved.getFullName(),
+                adminRole,
+                saved.getInviteExpiresAt(),
                 dispatch.sent(),
                 dispatch.activationUrl()
         );

@@ -1,9 +1,9 @@
-import { resolveApiPath } from "./pathResolver";
 import { apiRequest } from "./http";
 import type { AdminUserInviteResponse } from "../types/api";
 
 export type AdminRole = "SUPER_ADMIN" | "RESPONSABILE_ALBO" | "REVISORE" | "VIEWER";
 export type UserRole = "ADMIN" | "SUPPLIER";
+export type AdminAccountStatus = "ACTIVE" | "INVITE_PENDING" | "INVITE_EXPIRED" | "DEACTIVATED" | "ARCHIVED";
 
 export interface AdminUserRoleRow {
   userId: string;
@@ -11,6 +11,8 @@ export interface AdminUserRoleRow {
   fullName: string;
   userRole: UserRole;
   active: boolean;
+  archived: boolean;
+  accountStatus: AdminAccountStatus;
   adminRoles: AdminRole[];
 }
 
@@ -26,103 +28,85 @@ export interface CreateAdminUserInvitePayload {
   expiresInDays?: number;
 }
 
-function uniquePaths(paths: string[]): string[] {
-  return [...new Set(paths)];
-}
+const BASE = "/api/v2/admin/users-roles";
+const USERS_BASE = "/api/v2/admin/users";
 
-function adminUsersRolesBasePaths(): string[] {
-  const resolved = resolveApiPath({
-    feature: "adminV2",
-    legacyPath: "/api/admin/users-roles",
-    revampPath: "/api/v2/admin/users-roles"
-  });
-  return uniquePaths(["/api/v2/admin/users-roles", resolved, "/api/admin/users-roles"]);
-}
-
-function adminUsersBasePaths(): string[] {
-  const resolved = resolveApiPath({
-    feature: "adminV2",
-    legacyPath: "/api/admin/users",
-    revampPath: "/api/v2/admin/users"
-  });
-  return uniquePaths(["/api/v2/admin/users", resolved, "/api/admin/users"]);
-}
-
-async function apiRequestWithFallback<T>(
-  paths: string[],
-  buildPath: (basePath: string) => string,
-  token: string,
-  options: RequestInit = {}
-): Promise<T> {
-  let lastError: unknown;
-  for (const basePath of paths) {
-    try {
-      return await apiRequest<T>(buildPath(basePath), options, token);
-    } catch (error) {
-      lastError = error;
-    }
-  }
-  throw lastError;
-}
-
-export function getAdminUsersRoles(token: string, query?: string): Promise<AdminUserRoleRow[]> {
+export function getAdminUsersRoles(token: string, query?: string, archivedOnly = false): Promise<AdminUserRoleRow[]> {
   const q = query?.trim();
-  return apiRequestWithFallback<AdminUserRoleRow[]>(
-    adminUsersRolesBasePaths(),
-    (basePath) => (q ? `${basePath}?query=${encodeURIComponent(q)}` : basePath),
-    token
-  );
+  const search = new URLSearchParams();
+  if (q) search.set("query", q);
+  if (archivedOnly) search.set("archivedOnly", "true");
+  const qs = search.toString();
+  const path = qs ? `${BASE}?${qs}` : BASE;
+  return apiRequest<AdminUserRoleRow[]>(path, {}, token);
 }
 
 export function getMyAdminUsersRolesProfile(token: string): Promise<AdminUserRoleRow> {
-  return apiRequestWithFallback<AdminUserRoleRow>(
-    adminUsersRolesBasePaths(),
-    (basePath) => `${basePath}/me`,
-    token
-  );
+  return apiRequest<AdminUserRoleRow>(`${BASE}/me`, {}, token);
 }
 
 export function assignAdminUserRole(
   token: string,
   payload: AdminRoleMutationPayload
 ): Promise<AdminUserRoleRow> {
-  return apiRequestWithFallback<AdminUserRoleRow>(
-    adminUsersRolesBasePaths(),
-    (basePath) => `${basePath}/assign`,
-    token,
-    {
-      method: "POST",
-      body: JSON.stringify(payload)
-    }
-  );
+  return apiRequest<AdminUserRoleRow>(`${BASE}/assign`, {
+    method: "POST",
+    body: JSON.stringify(payload)
+  }, token);
 }
 
 export function revokeAdminUserRole(
   token: string,
   payload: AdminRoleMutationPayload
 ): Promise<AdminUserRoleRow> {
-  return apiRequestWithFallback<AdminUserRoleRow>(
-    adminUsersRolesBasePaths(),
-    (basePath) => `${basePath}/revoke`,
-    token,
-    {
-      method: "POST",
-      body: JSON.stringify(payload)
-    }
-  );
+  return apiRequest<AdminUserRoleRow>(`${BASE}/revoke`, {
+    method: "POST",
+    body: JSON.stringify(payload)
+  }, token);
+}
+
+export function deactivateAdminUser(
+  token: string,
+  targetUserId: string
+): Promise<AdminUserRoleRow> {
+  return apiRequest<AdminUserRoleRow>(`${BASE}/${encodeURIComponent(targetUserId)}/deactivate`, {
+    method: "POST"
+  }, token);
+}
+
+export function reactivateAdminUser(
+  token: string,
+  targetUserId: string
+): Promise<AdminUserRoleRow> {
+  return apiRequest<AdminUserRoleRow>(`${BASE}/${encodeURIComponent(targetUserId)}/reactivate`, {
+    method: "POST"
+  }, token);
+}
+
+export function archiveAdminUser(
+  token: string,
+  targetUserId: string
+): Promise<void> {
+  return apiRequest<void>(`${BASE}/${encodeURIComponent(targetUserId)}/archive`, {
+    method: "POST"
+  }, token);
 }
 
 export function createAdminUserInvite(
   token: string,
   payload: CreateAdminUserInvitePayload
 ): Promise<AdminUserInviteResponse> {
-  return apiRequestWithFallback<AdminUserInviteResponse>(
-    adminUsersBasePaths(),
-    (basePath) => `${basePath}/invite`,
-    token,
-    {
-      method: "POST",
-      body: JSON.stringify(payload)
-    }
-  );
+  return apiRequest<AdminUserInviteResponse>(`${USERS_BASE}/invite`, {
+    method: "POST",
+    body: JSON.stringify(payload)
+  }, token);
+}
+
+export function resendAdminUserInvite(
+  token: string,
+  targetUserId: string
+): Promise<AdminUserInviteResponse> {
+  return apiRequest<AdminUserInviteResponse>(`${USERS_BASE}/${encodeURIComponent(targetUserId)}/invite/resend`, {
+    method: "POST"
+  }, token);
 }

@@ -25,6 +25,7 @@ public class RevampAuditService {
     private final RevampAuditEventRepository auditEventRepository;
     private final UserRepository userRepository;
     private final ObjectMapper objectMapper;
+    private final RevampDashboardEventService dashboardEventService;
 
     @Transactional
     public RevampAuditEvent append(RevampAuditEventInputDto input) {
@@ -46,7 +47,9 @@ public class RevampAuditService {
             event.setActorUser(actor);
         }
 
-        return auditEventRepository.save(event);
+        RevampAuditEvent saved = auditEventRepository.save(event);
+        dashboardEventService.publishAuditEvent(saved);
+        return saved;
     }
 
     @Transactional(readOnly = true)

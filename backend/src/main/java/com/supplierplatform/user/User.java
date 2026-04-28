@@ -59,6 +59,9 @@ public class User implements UserDetails {
     @Column(name = "admin_last_seen_pending_at")
     private LocalDateTime adminLastSeenPendingAt;
 
+    @Column(name = "deleted_at")
+    private LocalDateTime deletedAt;
+
     @CreatedDate
     @Column(name = "created_at", updatable = false, nullable = false)
     private LocalDateTime createdAt;
@@ -101,6 +104,6 @@ public class User implements UserDetails {
 
     @Override
     public boolean isEnabled() {
-        return Boolean.TRUE.equals(isActive);
+        return Boolean.TRUE.equals(isActive) && deletedAt == null;
     }
 }

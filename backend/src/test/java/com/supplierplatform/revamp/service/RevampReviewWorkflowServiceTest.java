@@ -25,12 +25,16 @@ import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -70,6 +74,7 @@ class RevampReviewWorkflowServiceTest {
         reviewCase.setId(reviewCaseId);
         reviewCase.setApplication(app);
         reviewCase.setStatus(ReviewCaseStatus.IN_PROGRESS);
+        reviewCase.setVerifiedAt(LocalDateTime.now());
 
         User requester = new User();
         requester.setId(requesterId);
@@ -110,6 +115,7 @@ class RevampReviewWorkflowServiceTest {
         reviewCase.setId(reviewCaseId);
         reviewCase.setApplication(app);
         reviewCase.setStatus(ReviewCaseStatus.IN_PROGRESS);
+        reviewCase.setVerifiedAt(LocalDateTime.now());
 
         User actor = new User();
         actor.setId(actorId);
@@ -132,6 +138,92 @@ class RevampReviewWorkflowServiceTest {
         assertNotNull(app.getApprovedAt());
         verify(profileProjectionService).projectApprovedApplication(app.getId());
         verify(auditService).append(any(RevampAuditEventInputDto.class));
+    }
+
+    @Test
+    void decideIsBlockedWhileIntegrationRequestIsOpen() {
+        UUID reviewCaseId = UUID.randomUUID();
+
+        RevampApplication app = new RevampApplication();
+        app.setId(UUID.randomUUID());
+        app.setStatus(ApplicationStatus.INTEGRATION_REQUIRED);
+
+        RevampReviewCase reviewCase = new RevampReviewCase();
+        reviewCase.setId(reviewCaseId);
+        reviewCase.setApplication(app);
+        reviewCase.setStatus(ReviewCaseStatus.WAITING_SUPPLIER_RESPONSE);
+
+        when(reviewCaseRepository.findById(reviewCaseId)).thenReturn(Optional.of(reviewCase));
+
+        assertThrows(IllegalStateException.class, () -> reviewWorkflowService.decide(
+                reviewCaseId,
+                ReviewDecision.APPROVED,
+                "ok",
+                null
+        ));
+    }
+
+    @Test
+    void openCaseReusesExistingActiveCaseForApplication() {
+        UUID appId = UUID.randomUUID();
+        UUID reviewerId = UUID.randomUUID();
+
+        RevampApplication app = new RevampApplication();
+        app.setId(appId);
+        app.setStatus(ApplicationStatus.DRAFT);
+
+        RevampReviewCase existing = new RevampReviewCase();
+        existing.setId(UUID.randomUUID());
+        existing.setApplication(app);
+        existing.setStatus(ReviewCaseStatus.PENDING_ASSIGNMENT);
+        existing.setCreatedAt(LocalDateTime.now().minusDays(1));
+        existing.setUpdatedAt(LocalDateTime.now().minusHours(3));
+
+        User reviewer = new User();
+        reviewer.setId(reviewerId);
+
+        when(applicationRepository.findById(appId)).thenReturn(Optional.of(app));
+        when(reviewCaseRepository.findByApplicationIdAndStatusNotInOrderByUpdatedAtDesc(eq(appId), anyList()))
+                .thenReturn(List.of(existing));
+        when(userRepository.findById(reviewerId)).thenReturn(Optional.of(reviewer));
+        when(applicationRepository.save(any(RevampApplication.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(reviewCaseRepository.save(any(RevampReviewCase.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        RevampReviewCaseSummaryDto dto = reviewWorkflowService.openCase(appId, reviewerId, LocalDateTime.now().plusDays(2));
+
+        assertEquals(existing.getId(), dto.id());
+        assertEquals("IN_PROGRESS", dto.status());
+        assertEquals(reviewerId, dto.assignedToUserId());
+    }
+
+    @Test
+    void getQueueReturnsOnlyLatestActiveCasePerApplication() {
+        UUID appId = UUID.randomUUID();
+
+        RevampApplication app = new RevampApplication();
+        app.setId(appId);
+
+        RevampReviewCase older = new RevampReviewCase();
+        older.setId(UUID.randomUUID());
+        older.setApplication(app);
+        older.setStatus(ReviewCaseStatus.IN_PROGRESS);
+        older.setUpdatedAt(LocalDateTime.now().minusDays(2));
+        older.setCreatedAt(LocalDateTime.now().minusDays(2));
+
+        RevampReviewCase newer = new RevampReviewCase();
+        newer.setId(UUID.randomUUID());
+        newer.setApplication(app);
+        newer.setStatus(ReviewCaseStatus.READY_FOR_DECISION);
+        newer.setUpdatedAt(LocalDateTime.now().minusHours(1));
+        newer.setCreatedAt(LocalDateTime.now().minusHours(2));
+
+        when(reviewCaseRepository.findByStatusNotInOrderByUpdatedAtDesc(anyList())).thenReturn(List.of(newer, older));
+
+        List<RevampReviewCaseSummaryDto> queue = reviewWorkflowService.getQueue();
+
+        assertEquals(1, queue.size());
+        assertEquals(newer.getId(), queue.get(0).id());
+        assertEquals("READY_FOR_DECISION", queue.get(0).status());
     }
 }
 

@@ -17,7 +17,7 @@ import java.util.List;
 import java.util.UUID;
 
 @RestController
-@RequestMapping({"/api/v2/admin/users-roles", "/api/admin/users-roles"})
+@RequestMapping("/api/v2/admin/users-roles")
 @PreAuthorize("hasRole('ADMIN')")
 @RequiredArgsConstructor
 public class RevampAdminUserRoleController {
@@ -27,12 +27,13 @@ public class RevampAdminUserRoleController {
 
     @GetMapping
     public ResponseEntity<ApiResponse<List<RevampAdminUserRoleDto>>> list(
-            @RequestParam(value = "query", required = false) String query
+            @RequestParam(value = "query", required = false) String query,
+            @RequestParam(value = "archivedOnly", defaultValue = "false") boolean archivedOnly
     ) {
         revampAccessGuard.requireReadEnabled();
         User currentUser = getCurrentUser();
         adminRoleService.requireSuperAdmin(currentUser == null ? null : currentUser.getId());
-        return ResponseEntity.ok(ApiResponse.ok(adminRoleService.listAdminUsersWithRoles(query)));
+        return ResponseEntity.ok(ApiResponse.ok(adminRoleService.listAdminUsersWithRoles(query, archivedOnly)));
     }
 
     @GetMapping("/me")
@@ -70,6 +71,33 @@ public class RevampAdminUserRoleController {
         adminRoleService.revoke(request.getTargetUserId(), request.getAdminRole(), actorId);
         RevampAdminUserRoleDto dto = adminRoleService.getAdminUserWithRoles(request.getTargetUserId());
         return ResponseEntity.ok(ApiResponse.ok("Admin role revoked", dto));
+    }
+
+    @PostMapping("/{userId}/deactivate")
+    public ResponseEntity<ApiResponse<RevampAdminUserRoleDto>> deactivate(@PathVariable UUID userId) {
+        revampAccessGuard.requireWriteEnabled();
+        User currentUser = getCurrentUser();
+        UUID actorId = currentUser == null ? null : currentUser.getId();
+        RevampAdminUserRoleDto dto = adminRoleService.deactivateAdminUser(userId, actorId);
+        return ResponseEntity.ok(ApiResponse.ok("Admin user deactivated", dto));
+    }
+
+    @PostMapping("/{userId}/reactivate")
+    public ResponseEntity<ApiResponse<RevampAdminUserRoleDto>> reactivate(@PathVariable UUID userId) {
+        revampAccessGuard.requireWriteEnabled();
+        User currentUser = getCurrentUser();
+        UUID actorId = currentUser == null ? null : currentUser.getId();
+        RevampAdminUserRoleDto dto = adminRoleService.reactivateAdminUser(userId, actorId);
+        return ResponseEntity.ok(ApiResponse.ok("Admin user reactivated", dto));
+    }
+
+    @PostMapping("/{userId}/archive")
+    public ResponseEntity<ApiResponse<Object>> archive(@PathVariable UUID userId) {
+        revampAccessGuard.requireWriteEnabled();
+        User currentUser = getCurrentUser();
+        UUID actorId = currentUser == null ? null : currentUser.getId();
+        adminRoleService.archiveAdminUser(userId, actorId);
+        return ResponseEntity.ok(ApiResponse.ok("Admin user archived", null));
     }
 
     private User getCurrentUser() {

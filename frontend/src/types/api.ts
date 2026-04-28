@@ -20,6 +20,7 @@ export interface AuthResponse {
   email: string;
   fullName: string;
   role: "SUPPLIER" | "ADMIN";
+  adminGovernanceRole?: string;
 }
 
 export interface AdminUserInviteResponse {
@@ -54,6 +55,7 @@ export interface InviteTokenLookupResponse {
   id: string;
   status: "CREATED" | "SENT" | "OPENED" | "CONSUMED" | "EXPIRED" | "RENEWED" | "CANCELLED";
   registryType: "ALBO_A" | "ALBO_B";
+  invitedName?: string;
   invitedEmail: string;
   expiresAt: string;
 }
@@ -62,9 +64,13 @@ export interface AdminInviteResponse {
   id: string;
   token: string;
   status: "CREATED" | "SENT" | "OPENED" | "CONSUMED" | "EXPIRED" | "RENEWED" | "CANCELLED";
-  registryType: "ALBO_A" | "ALBO_B";
-  invitedEmail: string;
-  expiresAt: string;
+    registryType: "ALBO_A" | "ALBO_B";
+    invitedEmail: string;
+    invitedName?: string;
+    expiresAt: string;
+  mailSent?: boolean;
+  inviteUrl?: string;
+  mailFailureReason?: string;
 }
 
 export type AdminInviteUiStatus =
@@ -83,9 +89,10 @@ export interface AdminInviteMonitorRow {
   uiStatus: AdminInviteUiStatus;
   progressPercent: number;
   createdAt: string;
-  expiresAt: string;
-  invitedByName: string | null;
-  applicationId: string | null;
+    expiresAt: string;
+    invitedByName: string | null;
+    note?: string | null;
+    applicationId: string | null;
   profilePath: string | null;
   canRenew: boolean;
   canOpenProfile: boolean;

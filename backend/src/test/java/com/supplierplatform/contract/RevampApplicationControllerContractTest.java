@@ -204,29 +204,6 @@ class RevampApplicationControllerContractTest {
     }
 
     @Test
-    void getSectionsAliasPathReturnsExpectedContract() throws Exception {
-        UUID appId = UUID.randomUUID();
-        RevampSectionSnapshotDto section = new RevampSectionSnapshotDto(
-                UUID.randomUUID(),
-                appId,
-                "S2",
-                2,
-                false,
-                "{}",
-                LocalDateTime.now()
-        );
-
-        when(applicationService.getLatestSections(eq(appId))).thenReturn(List.of(section));
-
-        mockMvc.perform(get("/api/applications/{applicationId}/sections", appId))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.success").value(true))
-                .andExpect(jsonPath("$.data[0].applicationId").value(appId.toString()))
-                .andExpect(jsonPath("$.data[0].sectionKey").value("S2"))
-                .andExpect(jsonPath("$.data[0].sectionVersion").value(2));
-    }
-
-    @Test
     void createDraftValidationErrorIncludesLockedErrorContract() throws Exception {
         CreateApplicationDraftRequest request = new CreateApplicationDraftRequest();
         request.setInviteId(null);
@@ -290,22 +267,6 @@ class RevampApplicationControllerContractTest {
                 .andExpect(jsonPath("$.errorCode").value("ILLEGAL_STATE"))
                 .andExpect(jsonPath("$.requestId").value("req-switch-read-off"))
                 .andExpect(jsonPath("$.message").value("Revamp read path is disabled"));
-
-        verifyNoInteractions(applicationService);
-    }
-
-    @Test
-    void aliasRouteWhenAliasBridgeDisabledReturnsConflict() throws Exception {
-        ReflectionTestUtils.setField(revampFeatureFlags, "aliasEnabled", false);
-        UUID appId = UUID.randomUUID();
-
-        mockMvc.perform(get("/api/applications/{applicationId}/sections", appId)
-                        .header(RequestCorrelationFilter.REQUEST_ID_HEADER, "req-alias-off"))
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.success").value(false))
-                .andExpect(jsonPath("$.errorCode").value("ILLEGAL_STATE"))
-                .andExpect(jsonPath("$.requestId").value("req-alias-off"))
-                .andExpect(jsonPath("$.message").value("Revamp alias bridge is disabled"));
 
         verifyNoInteractions(applicationService);
     }

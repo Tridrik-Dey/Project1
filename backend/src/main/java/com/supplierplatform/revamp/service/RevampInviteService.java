@@ -67,7 +67,7 @@ public class RevampInviteService {
                 null,
                 "{\"status\":null}",
                 "{\"status\":\"" + saved.getStatus().name() + "\"}",
-                "{}"
+                "{\"invitedName\":\"" + esc(saved.getInvitedName()) + "\",\"invitedEmail\":\"" + esc(saved.getInvitedEmail()) + "\"}"
         ));
         return saved;
     }
@@ -95,11 +95,78 @@ public class RevampInviteService {
                     null,
                     "{\"status\":\"" + beforeStatus.name() + "\"}",
                     "{\"status\":\"" + saved.getStatus().name() + "\"}",
-                    "{}"
+                    "{\"invitedName\":\"" + esc(saved.getInvitedName()) + "\",\"invitedEmail\":\"" + esc(saved.getInvitedEmail()) + "\"}"
             ));
             return saved;
         }
         return invite;
+    }
+
+    @Transactional
+    public RevampInvite markSent(UUID inviteId, UUID sourceUserId) {
+        RevampInvite invite = inviteRepository.findById(inviteId)
+                .orElseThrow(() -> new EntityNotFoundException("RevampInvite", inviteId));
+        InviteStatus beforeStatus = invite.getStatus();
+        if (beforeStatus == InviteStatus.CREATED || beforeStatus == InviteStatus.OPENED || beforeStatus == InviteStatus.SENT) {
+            invite.setStatus(InviteStatus.SENT);
+            RevampInvite saved = inviteRepository.save(invite);
+            auditService.append(new RevampAuditEventInputDto(
+                    "revamp.invite.sent",
+                    "REVAMP_INVITE",
+                    saved.getId(),
+                    sourceUserId,
+                    null,
+                    null,
+                    null,
+                    "{\"status\":\"" + beforeStatus.name() + "\"}",
+                    "{\"status\":\"" + saved.getStatus().name() + "\"}",
+                    "{\"invitedName\":\"" + esc(saved.getInvitedName()) + "\",\"invitedEmail\":\"" + esc(saved.getInvitedEmail()) + "\"}"
+            ));
+            return saved;
+        }
+        return invite;
+    }
+
+    @Transactional
+    public RevampInvite updateInvite(
+            UUID inviteId,
+            RegistryType registryType,
+            String invitedEmail,
+            String invitedName,
+            UUID sourceUserId,
+            LocalDateTime expiresAt,
+            String note
+    ) {
+        RevampInvite invite = inviteRepository.findById(inviteId)
+                .orElseThrow(() -> new EntityNotFoundException("RevampInvite", inviteId));
+        if (invite.getStatus() == InviteStatus.CONSUMED
+                || invite.getStatus() == InviteStatus.EXPIRED
+                || invite.getStatus() == InviteStatus.RENEWED
+                || invite.getStatus() == InviteStatus.CANCELLED) {
+            throw new IllegalStateException("Invite cannot be updated after it is expired, consumed or closed");
+        }
+
+        String before = "{\"status\":\"" + invite.getStatus().name() + "\",\"invitedName\":\"" + esc(invite.getInvitedName()) + "\",\"invitedEmail\":\"" + esc(invite.getInvitedEmail()) + "\"}";
+        invite.setRegistryType(registryType);
+        invite.setInvitedEmail(invitedEmail);
+        invite.setInvitedName(invitedName);
+        invite.setExpiresAt(expiresAt);
+        invite.setNote(note);
+        RevampInvite saved = inviteRepository.save(invite);
+
+        auditService.append(new RevampAuditEventInputDto(
+                "revamp.invite.updated",
+                "REVAMP_INVITE",
+                saved.getId(),
+                sourceUserId,
+                null,
+                null,
+                null,
+                before,
+                "{\"status\":\"" + saved.getStatus().name() + "\",\"invitedName\":\"" + esc(saved.getInvitedName()) + "\",\"invitedEmail\":\"" + esc(saved.getInvitedEmail()) + "\"}",
+                "{\"reason\":\"admin invite details updated\"}"
+        ));
+        return saved;
     }
 
     @Transactional
@@ -120,15 +187,16 @@ public class RevampInviteService {
                 null,
                 "{\"status\":\"" + beforeStatus.name() + "\"}",
                 "{\"status\":\"" + saved.getStatus().name() + "\"}",
-                "{}"
+                "{\"invitedName\":\"" + esc(saved.getInvitedName()) + "\",\"invitedEmail\":\"" + esc(saved.getInvitedEmail()) + "\"}"
         ));
         return saved;
     }
 
     @Transactional
     public int expireInvitesDue(LocalDateTime now) {
-        List<RevampInvite> due = inviteRepository.findByStatusAndExpiresAtBefore(InviteStatus.SENT, now);
+        List<RevampInvite> due = inviteRepository.findByStatusInAndExpiresAtBefore(List.of(InviteStatus.SENT, InviteStatus.OPENED), now);
         for (RevampInvite invite : due) {
+            InviteStatus beforeStatus = invite.getStatus();
             invite.setStatus(InviteStatus.EXPIRED);
             auditService.append(new RevampAuditEventInputDto(
                     "revamp.invite.expired",
@@ -138,9 +206,9 @@ public class RevampInviteService {
                     null,
                     null,
                     null,
-                    "{\"status\":\"SENT\"}",
+                    "{\"status\":\"" + beforeStatus.name() + "\"}",
                     "{\"status\":\"EXPIRED\"}",
-                    "{}"
+                    "{\"invitedName\":\"" + esc(invite.getInvitedName()) + "\",\"invitedEmail\":\"" + esc(invite.getInvitedEmail()) + "\"}"
             ));
         }
         inviteRepository.saveAll(due);
@@ -197,9 +265,14 @@ public class RevampInviteService {
                 null,
                 "{\"status\":\"" + beforeStatus.name() + "\"}",
                 "{\"status\":\"RENEWED\"}",
-                "{\"newInviteId\":\"" + saved.getId() + "\"}"
+                "{\"newInviteId\":\"" + saved.getId() + "\",\"invitedName\":\"" + esc(original.getInvitedName()) + "\",\"invitedEmail\":\"" + esc(original.getInvitedEmail()) + "\"}"
         ));
         return saved;
+    }
+
+    private static String esc(String s) {
+        if (s == null) return "";
+        return s.replace("\\", "\\\\").replace("\"", "\\\"");
     }
 
     private RevampInviteListRowDto toMonitorRowSafely(RevampInvite invite) {
@@ -233,6 +306,7 @@ public class RevampInviteService {
                 invite.getCreatedAt(),
                 invite.getExpiresAt(),
                 invitedByName,
+                invite.getNote(),
                 linkedApplication != null ? linkedApplication.getId() : null,
                 profilePath,
                 canRenew,
@@ -253,6 +327,7 @@ public class RevampInviteService {
                 invite != null ? invite.getCreatedAt() : null,
                 invite != null ? invite.getExpiresAt() : null,
                 "n/d",
+                invite != null ? invite.getNote() : null,
                 null,
                 null,
                 false,

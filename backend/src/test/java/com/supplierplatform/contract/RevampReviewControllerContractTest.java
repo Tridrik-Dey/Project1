@@ -4,10 +4,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.supplierplatform.revamp.api.dto.AssignReviewCaseRequest;
 import com.supplierplatform.revamp.api.dto.ReviewDecisionRequest;
 import com.supplierplatform.revamp.api.dto.ReviewIntegrationRequest;
+import com.supplierplatform.revamp.api.dto.VerifyReviewCaseRequest;
 import com.supplierplatform.revamp.dto.RevampIntegrationRequestSummaryDto;
 import com.supplierplatform.revamp.dto.RevampReviewCaseSummaryDto;
 import com.supplierplatform.revamp.enums.AdminRole;
 import com.supplierplatform.revamp.enums.ReviewDecision;
+import com.supplierplatform.revamp.enums.VerificationOutcome;
 import com.supplierplatform.revamp.service.RevampGovernanceAuthorizationService;
 import com.supplierplatform.revamp.service.RevampReviewWorkflowService;
 import com.supplierplatform.user.User;
@@ -85,6 +87,8 @@ class RevampReviewControllerContractTest {
                 adminUser.getFullName(),
                 LocalDateTime.now(),
                 LocalDateTime.now().plusDays(3),
+                null, null, null, null,
+                null,
                 LocalDateTime.now()
         );
         when(reviewWorkflowService.getQueue()).thenReturn(List.of(row));
@@ -113,6 +117,8 @@ class RevampReviewControllerContractTest {
                 "Assignee Admin",
                 LocalDateTime.now(),
                 dueAt,
+                null, null, null, null,
+                null,
                 LocalDateTime.now()
         );
         when(reviewWorkflowService.openCase(eq(appId), eq(assigneeId), eq(dueAt))).thenReturn(dto);
@@ -144,6 +150,8 @@ class RevampReviewControllerContractTest {
                 adminUser.getFullName(),
                 LocalDateTime.now(),
                 LocalDateTime.now().plusDays(7),
+                null, null, null, null,
+                null,
                 LocalDateTime.now()
         );
         ReviewIntegrationRequest request = new ReviewIntegrationRequest();
@@ -181,6 +189,8 @@ class RevampReviewControllerContractTest {
                 adminUser.getFullName(),
                 LocalDateTime.now(),
                 LocalDateTime.now().plusDays(2),
+                null, null, null, null,
+                null,
                 LocalDateTime.now()
         );
         ReviewDecisionRequest request = new ReviewDecisionRequest();
@@ -217,6 +227,8 @@ class RevampReviewControllerContractTest {
                 adminUser.getFullName(),
                 LocalDateTime.now(),
                 LocalDateTime.now().plusDays(1),
+                null, null, null, null,
+                null,
                 LocalDateTime.now()
         );
         when(reviewWorkflowService.getHistory(eq(appId))).thenReturn(List.of(row));
@@ -226,31 +238,6 @@ class RevampReviewControllerContractTest {
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data[0].id").value(caseId.toString()))
                 .andExpect(jsonPath("$.data[0].decision").value("REJECTED"));
-    }
-
-    @Test
-    void queueAliasPathReturnsExpectedContract() throws Exception {
-        UUID appId = UUID.randomUUID();
-        UUID caseId = UUID.randomUUID();
-        RevampReviewCaseSummaryDto row = new RevampReviewCaseSummaryDto(
-                caseId,
-                appId,
-                "IN_PROGRESS",
-                null,
-                adminUser.getId(),
-                adminUser.getFullName(),
-                LocalDateTime.now(),
-                LocalDateTime.now().plusDays(3),
-                LocalDateTime.now()
-        );
-        when(reviewWorkflowService.getQueue()).thenReturn(List.of(row));
-
-        mockMvc.perform(get("/api/reviews/queue"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.success").value(true))
-                .andExpect(jsonPath("$.data[0].id").value(caseId.toString()))
-                .andExpect(jsonPath("$.data[0].applicationId").value(appId.toString()))
-                .andExpect(jsonPath("$.data[0].status").value("IN_PROGRESS"));
     }
 
     @Test
@@ -272,6 +259,47 @@ class RevampReviewControllerContractTest {
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data.reviewCaseId").value(caseId.toString()))
                 .andExpect(jsonPath("$.data.status").value("OPEN"));
+    }
+
+    @Test
+    void verifyReturnsExpectedContract() throws Exception {
+        UUID caseId = UUID.randomUUID();
+        UUID appId = UUID.randomUUID();
+        RevampReviewCaseSummaryDto dto = new RevampReviewCaseSummaryDto(
+                caseId,
+                appId,
+                "READY_FOR_DECISION",
+                null,
+                adminUser.getId(),
+                adminUser.getFullName(),
+                LocalDateTime.now(),
+                LocalDateTime.now().plusDays(2),
+                adminUser.getId(),
+                adminUser.getFullName(),
+                LocalDateTime.now(),
+                "Checklist completata",
+                "COMPLIANT",
+                LocalDateTime.now()
+        );
+        VerifyReviewCaseRequest request = new VerifyReviewCaseRequest();
+        request.setVerificationNote("Checklist completata");
+        request.setVerificationOutcome(VerificationOutcome.COMPLIANT);
+
+        when(reviewWorkflowService.verifyCase(
+                eq(caseId),
+                eq(adminUser.getId()),
+                eq("Checklist completata"),
+                eq(VerificationOutcome.COMPLIANT)
+        )).thenReturn(dto);
+
+        mockMvc.perform(post("/api/v2/reviews/{reviewCaseId}/verify", caseId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.message").value("Review case verified"))
+                .andExpect(jsonPath("$.data.status").value("READY_FOR_DECISION"))
+                .andExpect(jsonPath("$.data.verificationOutcome").value("COMPLIANT"));
     }
 }
 

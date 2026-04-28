@@ -18,7 +18,6 @@ export function useAdminGovernanceRole() {
     }
     let alive = true;
     setLoading(true);
-    setResolved(false);
     void (async () => {
       try {
         const me = await getMyAdminUsersRolesProfile(token);

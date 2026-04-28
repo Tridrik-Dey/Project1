@@ -2649,7 +2649,78 @@
 
  
 
- Documento redatto per il Direttore Generale del Gruppo Solco — Versione 1.0 — 2025. Destinato a uso interno per la progettazione del sistema Albo Fornitori Digitale. I contenuti sono da considerarsi come proposta di lavoro soggetta a revisione e approvazione da parte del management del Gruppo. 
+ Documento redatto per il Direttore Generale del Gruppo Solco — Versione 1.0 — 2025. Destinato a uso interno per la progettazione del sistema Albo Fornitori Digitale. I contenuti sono da considerarsi come proposta di lavoro soggetta a revisione e approvazione da parte del management del Gruppo.
+
+
+--------------------------------------------------------------------------------
+NOTE DI IMPLEMENTAZIONE — aggiornamento aprile 2025
+(Questa sezione descrive ciò che è stato implementato nel sistema e distingue
+ cosa era richiesto dal documento originale da cosa è stato aggiunto in fase
+ di sviluppo per colmare lacune operative non coperte dai requisiti.)
+--------------------------------------------------------------------------------
+
+A. MECCANISMO DI VERIFICA/PASSAGGIO REVISORE → RESPONSABILE
+   (NON presente nei requisiti originali — aggiunto in fase di sviluppo)
+
+   Il documento descriveva i ruoli di Revisore e Responsabile Albo ma non
+   specificava alcun meccanismo formale di handoff tra i due. In assenza di
+   tale meccanismo, il Responsabile non aveva modo di sapere se e quando un
+   Revisore aveva esaminato i documenti di una candidatura.
+
+   È stato implementato il seguente flusso aggiuntivo:
+
+   1. Nuovo stato workflow: READY_FOR_DECISION
+      Aggiunto tra WAITING_SUPPLIER_RESPONSE e DECIDED. Una pratica assume
+      questo stato quando un Revisore (o Responsabile/SuperAdmin) completa la
+      verifica documentale.
+
+   2. Campi di verifica sulla review case:
+      - verified_by_user_id: chi ha effettuato la verifica
+      - verified_at: data/ora della verifica
+      - verification_note: nota opzionale (max 1000 caratteri)
+      Questi campi sono persistiti con migrazione Flyway V18.
+
+   3. Endpoint backend: POST /api/v2/reviews/{reviewCaseId}/verify
+      Accessibile a SUPER_ADMIN, RESPONSABILE_ALBO, REVISORE.
+      Valida che la pratica non sia già finalizzata o in attesa di risposta
+      fornitore, poi imposta lo stato READY_FOR_DECISION.
+
+   4. UI — Pagina dettaglio pratica (AdminApplicationCasePage):
+      - Banner verde "Verificata da [nome] il [data]" quando la verifica
+        è completata, visibile a tutti i ruoli.
+      - Banner giallo di avviso "non ancora verificata da un revisore" per
+        Responsabile Albo e SuperAdmin quando la pratica non è verificata
+        e non è ancora finalizzata. Il Responsabile può comunque procedere
+        (approccio advisory, non bloccante).
+      - Pulsante "Completa verifica" visibile a Revisore, Responsabile Albo
+        e SuperAdmin, con modale che consente di scegliere l'esito
+        (Conforme / Conforme con riserve) e aggiungere una nota.
+
+   5. UI — Coda candidature (AdminQueuePage):
+      - Nuovo tab "Da decidere" che filtra le pratiche in stato
+        READY_FOR_DECISION.
+      - Badge "Verificata" sulle righe della coda.
+      - Nuovo KPI tile "Da decidere" nella barra superiore.
+
+   Scelta progettuale (Opzione B — advisory):
+   Il Responsabile Albo NON è bloccato dal decidere su pratiche non ancora
+   verificate. Può farlo liberamente, ma viene avvisato con un banner
+   giallo. Questo approccio preserva la flessibilità operativa mantenendo
+   tracciabilità del processo di verifica.
+
+B. NAVIGAZIONE LATERALE PER RUOLO
+   (NON presente nei requisiti originali — aggiunto in fase di sviluppo)
+
+   Il documento descriveva i ruoli e i loro permessi ma non specificava
+   quali voci del menu laterale dovessero essere visibili per ciascun ruolo.
+
+   È stata implementata la seguente visibilità:
+   - VIEWER: Dashboard, Fornitori (Albo A), Aziende (Albo B)
+   - REVISORE: + Candidature, Valutazioni
+   - RESPONSABILE_ALBO: + Inviti, Report
+   - SUPER_ADMIN: + Impostazioni (gestione utenti e ruoli)
+
+--------------------------------------------------------------------------------
 
  
 

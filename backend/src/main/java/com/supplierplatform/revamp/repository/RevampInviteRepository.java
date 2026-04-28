@@ -13,5 +13,7 @@ public interface RevampInviteRepository extends JpaRepository<RevampInvite, UUID
     Optional<RevampInvite> findByToken(String token);
     List<RevampInvite> findByInvitedEmailIgnoreCase(String invitedEmail);
     List<RevampInvite> findByStatusAndExpiresAtBefore(InviteStatus status, LocalDateTime expiresAt);
+    List<RevampInvite> findByStatusInAndExpiresAtBefore(List<InviteStatus> statuses, LocalDateTime expiresAt);
+    List<RevampInvite> findByStatusInAndExpiresAtBetween(List<InviteStatus> statuses, LocalDateTime startsAt, LocalDateTime endsAt);
     List<RevampInvite> findAllByOrderByCreatedAtDesc();
 }

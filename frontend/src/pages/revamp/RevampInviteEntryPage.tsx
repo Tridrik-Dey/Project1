@@ -34,10 +34,21 @@ export function RevampInviteEntryPage() {
           sourceChannel: "INVITE",
           inviteToken: token.trim(),
           inviteId: invite.id,
+          invitedName: invite.invitedName,
           invitedEmail: invite.invitedEmail
         });
 
-        const registerUrl = `/register?registryType=${encodeURIComponent(invite.registryType)}&sourceChannel=INVITE&inviteToken=${encodeURIComponent(token.trim())}&inviteId=${encodeURIComponent(invite.id)}&invitedEmail=${encodeURIComponent(invite.invitedEmail)}`;
+        const registerParams = new URLSearchParams({
+          registryType: invite.registryType,
+          sourceChannel: "INVITE",
+          inviteToken: token.trim(),
+          inviteId: invite.id,
+          invitedEmail: invite.invitedEmail
+        });
+        if (invite.invitedName?.trim()) {
+          registerParams.set("invitedName", invite.invitedName.trim());
+        }
+        const registerUrl = `/register?${registerParams.toString()}`;
         navigate(registerUrl, { replace: true });
       } catch (e) {
         if (!mounted) return;
@@ -78,4 +89,3 @@ export function RevampInviteEntryPage() {
     </section>
   );
 }
-

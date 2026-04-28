@@ -45,7 +45,7 @@ export function AdminApprovalEmailTemplatePage() {
             </ul>
 
             <div className="revamp-step-actions" style={{ marginTop: "1rem" }}>
-              <button type="button" className="home-btn home-btn-primary" disabled>
+              <button type="button" className="home-btn home-btn-primary admin-action-btn" disabled>
                 Accedi all&apos;area riservata
               </button>
             </div>

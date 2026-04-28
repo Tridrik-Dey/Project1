@@ -2,6 +2,7 @@ package com.supplierplatform.contract;
 
 import com.supplierplatform.config.RevampAccessGuard;
 import com.supplierplatform.revamp.dto.RevampAdminUserRoleDto;
+import com.supplierplatform.revamp.dto.AdminAccountStatus;
 import com.supplierplatform.revamp.enums.AdminRole;
 import com.supplierplatform.revamp.service.RevampAdminRoleService;
 import com.supplierplatform.user.User;
@@ -83,14 +84,18 @@ class RevampAdminUserRoleControllerContractTest {
                 "Admin One",
                 UserRole.ADMIN,
                 true,
+                false,
+                AdminAccountStatus.ACTIVE,
                 List.of(AdminRole.SUPER_ADMIN)
         );
 
         doNothing().when(revampAccessGuard).requireReadEnabled();
         doNothing().when(adminRoleService).requireSuperAdmin(eq(adminUser.getId()));
-        when(adminRoleService.listAdminUsersWithRoles("admin")).thenReturn(List.of(row));
+        when(adminRoleService.listAdminUsersWithRoles("admin", true)).thenReturn(List.of(row));
 
-        mockMvc.perform(get("/api/v2/admin/users-roles").param("query", "admin"))
+        mockMvc.perform(get("/api/v2/admin/users-roles")
+                        .param("query", "admin")
+                        .param("archivedOnly", "true"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data[0].userId").value(userId.toString()))
@@ -105,6 +110,8 @@ class RevampAdminUserRoleControllerContractTest {
                 adminUser.getFullName(),
                 UserRole.ADMIN,
                 true,
+                false,
+                AdminAccountStatus.ACTIVE,
                 List.of(AdminRole.REVISORE)
         );
 

@@ -1,15 +1,20 @@
 package com.supplierplatform.revamp.service;
 
 import com.supplierplatform.common.EntityNotFoundException;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.supplierplatform.revamp.dto.RevampAuditEventInputDto;
 import com.supplierplatform.revamp.dto.RevampEvaluationAggregateDto;
 import com.supplierplatform.revamp.dto.RevampEvaluationAnalyticsDto;
 import com.supplierplatform.revamp.dto.RevampEvaluationHistoryItemDto;
 import com.supplierplatform.revamp.dto.RevampEvaluationOverviewDto;
 import com.supplierplatform.revamp.dto.RevampEvaluationOverviewRowDto;
 import com.supplierplatform.revamp.dto.RevampEvaluationSummaryDto;
+import com.supplierplatform.revamp.enums.RegistryProfileStatus;
 import com.supplierplatform.revamp.mapper.RevampEvaluationMapper;
 import com.supplierplatform.revamp.model.RevampEvaluation;
 import com.supplierplatform.revamp.model.RevampEvaluationDimension;
+import com.supplierplatform.revamp.model.RevampSupplierEvaluatorAssignment;
 import com.supplierplatform.revamp.model.RevampSupplierRegistryProfile;
 import com.supplierplatform.revamp.repository.RevampEvaluationDimensionRepository;
 import com.supplierplatform.revamp.repository.RevampEvaluationRepository;
@@ -41,9 +46,73 @@ public class RevampEvaluationService {
     private final RevampSupplierRegistryProfileRepository supplierRegistryProfileRepository;
     private final UserRepository userRepository;
     private final RevampEvaluationMapper evaluationMapper;
+    private final RevampEvaluationAssignmentService evaluationAssignmentService;
+    private final RevampAuditService auditService;
+    private final ObjectMapper objectMapper;
 
     @Transactional
     public RevampEvaluationSummaryDto submitEvaluation(
+            UUID supplierRegistryProfileId,
+            UUID evaluatorUserId,
+            String collaborationType,
+            String collaborationPeriod,
+            String referenceCode,
+            short overallScore,
+            String comment,
+            Map<String, Short> dimensions
+    ) {
+        evaluationAssignmentService.requireAssignedEvaluator(supplierRegistryProfileId, evaluatorUserId);
+        RevampEvaluationSummaryDto summary = createEvaluation(
+                supplierRegistryProfileId,
+                evaluatorUserId,
+                collaborationType,
+                collaborationPeriod,
+                referenceCode,
+                overallScore,
+                comment,
+                dimensions
+        );
+        RevampEvaluation saved = evaluationRepository.findById(summary.id())
+                .orElseThrow(() -> new EntityNotFoundException("RevampEvaluation", summary.id()));
+        evaluationAssignmentService.markCompleted(supplierRegistryProfileId, evaluatorUserId, saved);
+        appendEvaluationAudit("revamp.evaluation.completed", saved, evaluatorUserId, null);
+        return summary;
+    }
+
+    @Transactional
+    public RevampEvaluationSummaryDto submitAssignment(UUID assignmentId, UUID actorUserId) {
+        RevampSupplierEvaluatorAssignment assignment = evaluationAssignmentService.getAssignmentForSubmit(assignmentId, actorUserId);
+        UUID supplierId = assignment.getSupplierRegistryProfile() != null ? assignment.getSupplierRegistryProfile().getId() : null;
+        UUID evaluatorId = assignment.getAssignedEvaluatorUser() != null ? assignment.getAssignedEvaluatorUser().getId() : null;
+        if (supplierId == null || evaluatorId == null) {
+            throw new IllegalStateException("Assignment is missing supplier or evaluator");
+        }
+        if (assignment.getDraftOverallScore() == null || assignment.getDraftOverallScore() < 1 || assignment.getDraftOverallScore() > 5) {
+            throw new IllegalStateException("Overall score is required before submitting");
+        }
+        if (assignment.getDraftCollaborationType() == null || assignment.getDraftCollaborationType().isBlank()
+                || assignment.getDraftCollaborationPeriod() == null || assignment.getDraftCollaborationPeriod().isBlank()) {
+            throw new IllegalStateException("Collaboration type and period are required before submitting");
+        }
+
+        RevampEvaluationSummaryDto summary = createEvaluation(
+                supplierId,
+                evaluatorId,
+                assignment.getDraftCollaborationType(),
+                assignment.getDraftCollaborationPeriod(),
+                assignment.getDraftReferenceCode(),
+                assignment.getDraftOverallScore(),
+                assignment.getDraftComment(),
+                draftDimensions(assignment)
+        );
+        RevampEvaluation saved = evaluationRepository.findById(summary.id())
+                .orElseThrow(() -> new EntityNotFoundException("RevampEvaluation", summary.id()));
+        evaluationAssignmentService.markCompleted(supplierId, evaluatorId, saved);
+        appendEvaluationAudit("revamp.evaluation.completed", saved, actorUserId, assignmentId);
+        return summary;
+    }
+
+    private RevampEvaluationSummaryDto createEvaluation(
             UUID supplierRegistryProfileId,
             UUID evaluatorUserId,
             String collaborationType,
@@ -80,6 +149,9 @@ public class RevampEvaluationService {
 
         if (dimensions != null && !dimensions.isEmpty()) {
             for (Map.Entry<String, Short> entry : dimensions.entrySet()) {
+                if (entry.getValue() == null || entry.getValue() < 1 || entry.getValue() > 5) {
+                    throw new IllegalArgumentException("Dimension scores must be between 1 and 5");
+                }
                 RevampEvaluationDimension dimension = new RevampEvaluationDimension();
                 dimension.setEvaluation(saved);
                 dimension.setDimensionKey(entry.getKey());
@@ -101,7 +173,9 @@ public class RevampEvaluationService {
         evaluation.setIsAnnulled(true);
         evaluation.setAnnulledByUser(actor);
         evaluation.setAnnulledAt(LocalDateTime.now());
-        return evaluationMapper.toSummary(evaluationRepository.save(evaluation));
+        RevampEvaluation saved = evaluationRepository.save(evaluation);
+        appendEvaluationAudit("revamp.evaluation.edited", saved, actorUserId, null);
+        return evaluationMapper.toSummary(saved);
     }
 
     @Transactional(readOnly = true)
@@ -144,10 +218,23 @@ public class RevampEvaluationService {
                 .toList();
 
         Map<UUID, List<RevampEvaluationDimension>> dimensionsByEvaluationId = loadDimensions(all);
-        List<RevampEvaluationOverviewRowDto> rows = all.stream()
+        List<RevampEvaluationOverviewRowDto> evaluationRows = all.stream()
                 .map(e -> toOverviewRow(e, dimensionsByEvaluationId.getOrDefault(e.getId(), List.of())))
+                .toList();
+        Map<UUID, Boolean> hasEvaluationBySupplierId = evaluationRows.stream()
+                .filter(row -> row.supplierRegistryProfileId() != null)
+                .collect(Collectors.toMap(
+                        RevampEvaluationOverviewRowDto::supplierRegistryProfileId,
+                        ignored -> true,
+                        (a, b) -> true
+                ));
+        List<RevampEvaluationOverviewRowDto> supplierRows = supplierRegistryProfileRepository.findByStatus(RegistryProfileStatus.APPROVED).stream()
+                .filter(profile -> profile.getId() != null && !hasEvaluationBySupplierId.containsKey(profile.getId()))
+                .map(this::toUnevaluatedOverviewRow)
+                .toList();
+        List<RevampEvaluationOverviewRowDto> rows = java.util.stream.Stream.concat(evaluationRows.stream(), supplierRows.stream())
                 .filter(row -> filterRow(row, query, type, period, minScore, evaluator))
-                .sorted(Comparator.comparing(RevampEvaluationOverviewRowDto::createdAt).reversed())
+                .sorted(Comparator.comparing(RevampEvaluationOverviewRowDto::createdAt, Comparator.nullsLast(Comparator.reverseOrder())))
                 .limit(Math.max(1, Math.min(500, limit)))
                 .toList();
 
@@ -289,6 +376,23 @@ public class RevampEvaluationService {
         );
     }
 
+    private RevampEvaluationOverviewRowDto toUnevaluatedOverviewRow(RevampSupplierRegistryProfile profile) {
+        return new RevampEvaluationOverviewRowDto(
+                null,
+                profile.getId(),
+                profile.getDisplayName() != null ? profile.getDisplayName() : (profile.getSupplierUser() != null ? profile.getSupplierUser().getFullName() : null),
+                profile.getRegistryType() != null ? profile.getRegistryType().name() : null,
+                profile.getUpdatedAt() != null ? profile.getUpdatedAt() : profile.getCreatedAt(),
+                null,
+                null,
+                null,
+                null,
+                null,
+                0.0,
+                Map.of()
+        );
+    }
+
     private boolean filterRow(
             RevampEvaluationOverviewRowDto row,
             String query,
@@ -373,5 +477,58 @@ public class RevampEvaluationService {
             return "Val. " + parts[0] + " " + parts[1].charAt(0) + ".";
         }
         return "Val. " + parts[0] + ".";
+    }
+
+    private Map<String, Short> draftDimensions(RevampSupplierEvaluatorAssignment assignment) {
+        if (assignment.getDraftDimensionScoresJson() == null || assignment.getDraftDimensionScoresJson().isNull()) {
+            return Map.of();
+        }
+        try {
+            Map<?, ?> raw = objectMapper.treeToValue(assignment.getDraftDimensionScoresJson(), Map.class);
+            Map<String, Short> result = new java.util.LinkedHashMap<>();
+            raw.forEach((key, value) -> {
+                if (key == null || value == null) return;
+                if (value instanceof Number number) {
+                    result.put(String.valueOf(key), number.shortValue());
+                }
+            });
+            return result;
+        } catch (JsonProcessingException ex) {
+            return Map.of();
+        }
+    }
+
+    private void appendEvaluationAudit(String eventKey, RevampEvaluation evaluation, UUID actorUserId, UUID assignmentId) {
+        UUID supplierId = evaluation.getSupplierRegistryProfile() != null ? evaluation.getSupplierRegistryProfile().getId() : null;
+        String actorRole = null;
+        if (actorUserId != null) {
+            try {
+                User actor = userRepository.findById(actorUserId).orElse(null);
+                actorRole = actor != null && actor.getRole() != null ? actor.getRole().name() : null;
+            } catch (RuntimeException ignored) {
+                actorRole = null;
+            }
+        }
+        String metadata = "{\"evaluationId\":\"" + evaluation.getId()
+                + "\",\"assignmentId\":\"" + (assignmentId != null ? assignmentId : "")
+                + "\",\"supplierName\":\"" + esc(evaluation.getSupplierRegistryProfile() != null ? evaluation.getSupplierRegistryProfile().getDisplayName() : "")
+                + "\",\"overallScore\":\"" + evaluation.getOverallScore() + "\"}";
+        auditService.append(new RevampAuditEventInputDto(
+                eventKey,
+                "REVAMP_SUPPLIER_REGISTRY_PROFILE",
+                supplierId,
+                actorUserId,
+                actorRole,
+                null,
+                null,
+                null,
+                "{\"overallScore\":\"" + evaluation.getOverallScore() + "\"}",
+                metadata
+        ));
+    }
+
+    private static String esc(String s) {
+        if (s == null) return "";
+        return s.replace("\\", "\\\\").replace("\"", "\\\"");
     }
 }

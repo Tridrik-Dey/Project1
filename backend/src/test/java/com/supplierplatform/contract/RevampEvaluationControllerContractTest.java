@@ -169,25 +169,5 @@ class RevampEvaluationControllerContractTest {
                 .andExpect(jsonPath("$.data.annulled").value(true));
     }
 
-    @Test
-    void listAliasPathReturnsExpectedContract() throws Exception {
-        UUID profileId = UUID.randomUUID();
-        UUID evalId = UUID.randomUUID();
-        RevampEvaluationSummaryDto row = new RevampEvaluationSummaryDto(
-                evalId,
-                profileId,
-                adminUser.getId(),
-                (short) 5,
-                false,
-                LocalDateTime.now()
-        );
-        when(evaluationService.listBySupplier(eq(profileId))).thenReturn(List.of(row));
-
-        mockMvc.perform(get("/api/evaluations").param("supplierId", profileId.toString()))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.success").value(true))
-                .andExpect(jsonPath("$.data[0].id").value(evalId.toString()))
-                .andExpect(jsonPath("$.data[0].supplierRegistryProfileId").value(profileId.toString()));
-    }
 }
 

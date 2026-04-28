@@ -6,6 +6,7 @@ export interface AuthState {
   email: string;
   fullName: string;
   role: "SUPPLIER" | "ADMIN";
+  adminGovernanceRole?: string;
 }
 
 function decodeJwtPayload(token: string): Record<string, unknown> | null {

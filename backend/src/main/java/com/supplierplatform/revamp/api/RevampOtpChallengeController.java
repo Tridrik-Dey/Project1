@@ -19,7 +19,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
-@RequestMapping({"/api/v2/otp-challenges", "/api/otp-challenges"})
+@RequestMapping("/api/v2/otp-challenges")
 @PreAuthorize("isAuthenticated()")
 @RequiredArgsConstructor
 public class RevampOtpChallengeController {

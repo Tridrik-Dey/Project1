@@ -21,7 +21,7 @@ public class RevampAdminInviteMailService {
     @Value("${app.reviews.status-mail.from:no-reply@supplierplatform.local}")
     private String fromEmail;
 
-    @Value("${app.frontend.base-url:http://127.0.0.1:3000}")
+    @Value("${app.frontend.base-url:http://127.0.0.1:5173}")
     private String frontendBaseUrl;
 
     public record InviteDispatchResult(boolean sent, String activationUrl, String failureReason) {}

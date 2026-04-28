@@ -22,6 +22,7 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -94,7 +95,7 @@ class RevampInviteServiceTest {
         due.setId(UUID.randomUUID());
         due.setStatus(InviteStatus.SENT);
 
-        when(inviteRepository.findByStatusAndExpiresAtBefore(any(InviteStatus.class), any(LocalDateTime.class)))
+        when(inviteRepository.findByStatusInAndExpiresAtBefore(anyList(), any(LocalDateTime.class)))
                 .thenReturn(List.of(due));
         when(inviteRepository.saveAll(any())).thenAnswer(invocation -> invocation.getArgument(0));
 

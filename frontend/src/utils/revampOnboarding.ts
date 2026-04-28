@@ -3,6 +3,7 @@ export type RevampOnboardingContext = {
   sourceChannel?: "PUBLIC" | "INVITE";
   inviteToken?: string;
   inviteId?: string;
+  invitedName?: string;
   invitedEmail?: string;
 };
 

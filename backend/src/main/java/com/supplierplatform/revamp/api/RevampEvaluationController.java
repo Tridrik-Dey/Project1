@@ -2,12 +2,19 @@ package com.supplierplatform.revamp.api;
 
 import com.supplierplatform.common.ApiResponse;
 import com.supplierplatform.config.RevampAccessGuard;
+import com.supplierplatform.revamp.api.dto.AssignEvaluationEvaluatorRequest;
 import com.supplierplatform.revamp.api.dto.CreateEvaluationRequest;
+import com.supplierplatform.revamp.api.dto.ReassignEvaluationRequest;
+import com.supplierplatform.revamp.api.dto.SaveEvaluationDraftRequest;
 import com.supplierplatform.revamp.dto.RevampEvaluationAggregateDto;
 import com.supplierplatform.revamp.dto.RevampEvaluationAnalyticsDto;
+import com.supplierplatform.revamp.dto.RevampEligibleEvaluatorDto;
+import com.supplierplatform.revamp.dto.RevampEvaluationAssignmentDto;
+import com.supplierplatform.revamp.dto.RevampEvaluationAssignmentRowDto;
 import com.supplierplatform.revamp.dto.RevampEvaluationOverviewDto;
 import com.supplierplatform.revamp.dto.RevampEvaluationSummaryDto;
 import com.supplierplatform.revamp.enums.AdminRole;
+import com.supplierplatform.revamp.service.RevampEvaluationAssignmentService;
 import com.supplierplatform.revamp.service.RevampGovernanceAuthorizationService;
 import com.supplierplatform.revamp.service.RevampEvaluationService;
 import com.supplierplatform.user.User;
@@ -22,12 +29,13 @@ import java.util.List;
 import java.util.UUID;
 
 @RestController
-@RequestMapping({"/api/v2/evaluations", "/api/evaluations"})
+@RequestMapping("/api/v2/evaluations")
 @PreAuthorize("hasRole('ADMIN')")
 @RequiredArgsConstructor
 public class RevampEvaluationController {
 
     private final RevampEvaluationService evaluationService;
+    private final RevampEvaluationAssignmentService evaluationAssignmentService;
     private final RevampAccessGuard revampAccessGuard;
     private final RevampGovernanceAuthorizationService governanceAuthorizationService;
 
@@ -90,6 +98,83 @@ public class RevampEvaluationController {
         return ResponseEntity.ok(ApiResponse.ok(dto));
     }
 
+    @GetMapping("/eligible-evaluators")
+    public ResponseEntity<ApiResponse<List<RevampEligibleEvaluatorDto>>> eligibleEvaluators() {
+        revampAccessGuard.requireReadEnabled();
+        return ResponseEntity.ok(ApiResponse.ok(evaluationAssignmentService.eligibleEvaluators(getCurrentUserId())));
+    }
+
+    @GetMapping("/assignments")
+    public ResponseEntity<ApiResponse<?>> assignments(
+            @RequestParam(name = "supplierId", required = false) UUID supplierId,
+            @RequestParam(name = "scope", required = false) String scope
+    ) {
+        revampAccessGuard.requireReadEnabled();
+        governanceAuthorizationService.requireAnyRole(
+                getCurrentUserId(),
+                AdminRole.SUPER_ADMIN,
+                AdminRole.RESPONSABILE_ALBO,
+                AdminRole.REVISORE,
+                AdminRole.VIEWER
+        );
+        if (supplierId != null) {
+            return ResponseEntity.ok(ApiResponse.ok(evaluationAssignmentService.currentAssignment(supplierId)));
+        }
+        List<RevampEvaluationAssignmentRowDto> rows = evaluationAssignmentService.listAssignments(scope, getCurrentUserId());
+        return ResponseEntity.ok(ApiResponse.ok(rows));
+    }
+
+    @PostMapping("/assignments/{supplierId}")
+    public ResponseEntity<ApiResponse<RevampEvaluationAssignmentDto>> assignEvaluator(
+            @PathVariable UUID supplierId,
+            @Valid @RequestBody AssignEvaluationEvaluatorRequest request
+    ) {
+        revampAccessGuard.requireWriteEnabled();
+        User currentUser = getCurrentUser();
+        UUID actorId = currentUser == null ? null : currentUser.getId();
+        RevampEvaluationAssignmentDto dto = evaluationAssignmentService.assign(
+                supplierId,
+                request.getEvaluatorUserId(),
+                actorId,
+                request.getReason(),
+                request.getDueAt()
+        );
+        return ResponseEntity.ok(ApiResponse.ok("Evaluation evaluator assigned", dto));
+    }
+
+    @PutMapping("/assignments/{assignmentId}/draft")
+    public ResponseEntity<ApiResponse<RevampEvaluationAssignmentDto>> saveDraft(
+            @PathVariable UUID assignmentId,
+            @Valid @RequestBody SaveEvaluationDraftRequest request
+    ) {
+        revampAccessGuard.requireWriteEnabled();
+        RevampEvaluationAssignmentDto dto = evaluationAssignmentService.saveDraft(assignmentId, request, getCurrentUserId());
+        return ResponseEntity.ok(ApiResponse.ok("Evaluation draft saved", dto));
+    }
+
+    @PostMapping("/assignments/{assignmentId}/submit")
+    public ResponseEntity<ApiResponse<RevampEvaluationSummaryDto>> submitAssignment(@PathVariable UUID assignmentId) {
+        revampAccessGuard.requireWriteEnabled();
+        RevampEvaluationSummaryDto dto = evaluationService.submitAssignment(assignmentId, getCurrentUserId());
+        return ResponseEntity.ok(ApiResponse.ok("Evaluation completed", dto));
+    }
+
+    @PutMapping("/assignments/{assignmentId}/reassign")
+    public ResponseEntity<ApiResponse<RevampEvaluationAssignmentDto>> reassign(
+            @PathVariable UUID assignmentId,
+            @Valid @RequestBody ReassignEvaluationRequest request
+    ) {
+        revampAccessGuard.requireWriteEnabled();
+        RevampEvaluationAssignmentDto current = evaluationAssignmentService.reassign(
+                assignmentId,
+                request.getEvaluatorUserId(),
+                getCurrentUserId(),
+                request.getReason(),
+                request.getDueAt()
+        );
+        return ResponseEntity.ok(ApiResponse.ok("Evaluation reassigned", current));
+    }
+
     @GetMapping("/summary")
     public ResponseEntity<ApiResponse<RevampEvaluationAggregateDto>> summaryBySupplier(
             @RequestParam("supplierId") UUID supplierId
@@ -124,8 +209,7 @@ public class RevampEvaluationController {
         revampAccessGuard.requireWriteEnabled();
         governanceAuthorizationService.requireAnyRole(
                 getCurrentUserId(),
-                AdminRole.SUPER_ADMIN,
-                AdminRole.RESPONSABILE_ALBO
+                AdminRole.SUPER_ADMIN
         );
         User currentUser = getCurrentUser();
         RevampEvaluationSummaryDto dto = evaluationService.annul(evaluationId, currentUser.getId());

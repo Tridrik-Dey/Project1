@@ -3,6 +3,7 @@ import com.supplierplatform.revamp.schema.RevampTableNames;
 
 import com.supplierplatform.revamp.enums.ReviewCaseStatus;
 import com.supplierplatform.revamp.enums.ReviewDecision;
+import com.supplierplatform.revamp.enums.VerificationOutcome;
 import com.supplierplatform.user.User;
 import jakarta.persistence.*;
 import lombok.Getter;
@@ -57,6 +58,20 @@ public class RevampReviewCase {
 
     @Column(name = "sla_due_at")
     private LocalDateTime slaDueAt;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "verified_by_user_id")
+    private User verifiedByUser;
+
+    @Column(name = "verified_at")
+    private LocalDateTime verifiedAt;
+
+    @Column(name = "verification_note", columnDefinition = "TEXT")
+    private String verificationNote;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "verification_outcome", length = 128)
+    private VerificationOutcome verificationOutcome;
 
     @CreatedDate
     @Column(name = "created_at", nullable = false, updatable = false)

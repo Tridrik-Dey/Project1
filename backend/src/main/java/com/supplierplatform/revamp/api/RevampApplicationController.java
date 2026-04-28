@@ -6,25 +6,31 @@ import com.supplierplatform.revamp.api.dto.CreateApplicationDraftRequest;
 import com.supplierplatform.revamp.api.dto.SaveApplicationSectionRequest;
 import com.supplierplatform.revamp.dto.RevampApplicationSummaryDto;
 import com.supplierplatform.revamp.dto.RevampSectionSnapshotDto;
+import com.supplierplatform.revamp.service.RevampApplicationAttachmentDownloadService;
 import com.supplierplatform.revamp.service.RevampApplicationService;
 import com.supplierplatform.user.User;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.core.io.Resource;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.UUID;
 
 @RestController
-@RequestMapping({"/api/v2/applications", "/api/applications"})
+@RequestMapping("/api/v2/applications")
 @PreAuthorize("isAuthenticated()")
 @RequiredArgsConstructor
 public class RevampApplicationController {
 
     private final RevampApplicationService applicationService;
+    private final RevampApplicationAttachmentDownloadService attachmentDownloadService;
     private final RevampAccessGuard revampAccessGuard;
 
     @PostMapping
@@ -59,6 +65,26 @@ public class RevampApplicationController {
     public ResponseEntity<ApiResponse<List<RevampSectionSnapshotDto>>> getSections(@PathVariable UUID applicationId) {
         revampAccessGuard.requireReadEnabled();
         return ResponseEntity.ok(ApiResponse.ok(applicationService.getLatestSections(applicationId)));
+    }
+
+    @GetMapping("/{applicationId}/attachments/download")
+    public ResponseEntity<Resource> downloadAttachment(
+            @PathVariable UUID applicationId,
+            @RequestParam String storageKey
+    ) {
+        revampAccessGuard.requireReadEnabled();
+        RevampApplicationAttachmentDownloadService.AttachmentDownload download =
+                attachmentDownloadService.download(applicationId, storageKey);
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(download.mimeType()))
+                .header(
+                        "Content-Disposition",
+                        ContentDisposition.inline()
+                                .filename(download.fileName(), StandardCharsets.UTF_8)
+                                .build()
+                                .toString()
+                )
+                .body(download.resource());
     }
 
     @PutMapping("/{applicationId}/sections/{sectionKey}")

@@ -2,6 +2,7 @@ package com.supplierplatform.revamp.api;
 
 import com.supplierplatform.common.ApiResponse;
 import com.supplierplatform.config.RevampAccessGuard;
+import com.supplierplatform.revamp.dto.ComposeEmailRequest;
 import com.supplierplatform.revamp.dto.RevampSupplierProfileDto;
 import com.supplierplatform.revamp.dto.RevampSupplierProfileTimelineEventDto;
 import com.supplierplatform.revamp.enums.RegistryProfileStatus;
@@ -11,6 +12,7 @@ import com.supplierplatform.revamp.service.RevampGovernanceAuthorizationService;
 import com.supplierplatform.revamp.service.RevampSupplierProfileService;
 import com.supplierplatform.user.User;
 import com.supplierplatform.user.UserRole;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -23,6 +25,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -31,7 +34,7 @@ import java.util.List;
 import java.util.UUID;
 
 @RestController
-@RequestMapping({"/api/v2/profiles", "/api/profiles"})
+@RequestMapping("/api/v2/profiles")
 @RequiredArgsConstructor
 public class RevampProfileController {
 
@@ -121,6 +124,23 @@ public class RevampProfileController {
         );
         RevampSupplierProfileDto dto = supplierProfileService.suspend(profileId, getCurrentUser());
         return ResponseEntity.ok(ApiResponse.ok("Profile suspended", dto));
+    }
+
+    @PostMapping("/{profileId}/compose-email")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<Void>> composeEmail(
+            @PathVariable UUID profileId,
+            @Valid @RequestBody ComposeEmailRequest request
+    ) {
+        revampAccessGuard.requireWriteEnabled();
+        governanceAuthorizationService.requireAnyRole(
+                getCurrentUserId(),
+                AdminRole.SUPER_ADMIN,
+                AdminRole.RESPONSABILE_ALBO,
+                AdminRole.REVISORE
+        );
+        supplierProfileService.composeEmail(profileId, request, getCurrentUser());
+        return ResponseEntity.ok(ApiResponse.ok("Email inviata con successo", null));
     }
 
     @PostMapping("/{profileId}/reactivate")

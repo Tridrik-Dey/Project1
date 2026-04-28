@@ -36,6 +36,9 @@ export async function apiRequest<T>(
   const isJson = contentType.includes("application/json");
 
   if (!response.ok) {
+    if (response.status === 401) {
+      window.dispatchEvent(new Event("auth:expired"));
+    }
     if (isJson) {
       const errBody = (await response.json()) as ApiResponse<unknown>;
       throw new HttpError(errBody.message || "Request failed", response.status);
@@ -71,6 +74,9 @@ export async function apiBinaryRequest(
   });
 
   if (!response.ok) {
+    if (response.status === 401) {
+      window.dispatchEvent(new Event("auth:expired"));
+    }
     throw new HttpError(`Request failed with status ${response.status}`, response.status);
   }
 

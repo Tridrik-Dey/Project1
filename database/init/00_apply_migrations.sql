@@ -14,3 +14,11 @@
 \i /docker-entrypoint-initdb.d/migrations/V13__normalize_validator_role_to_admin.sql
 \i /docker-entrypoint-initdb.d/migrations/V14__rename_validator_last_seen_column_to_admin.sql
 \i /docker-entrypoint-initdb.d/migrations/V15__retire_legacy_user_role_enum_artifacts.sql
+\i /docker-entrypoint-initdb.d/migrations/V15__add_user_soft_delete.sql
+\i /docker-entrypoint-initdb.d/migrations/V16__enforce_single_admin_governance_role.sql
+\i /docker-entrypoint-initdb.d/migrations/V17__phase7_json_key_backfill_and_attachment_profile_detail.sql
+\i /docker-entrypoint-initdb.d/migrations/V18__add_review_case_verification_fields.sql
+\i /docker-entrypoint-initdb.d/migrations/V19__add_review_case_verification_outcome.sql
+\i /docker-entrypoint-initdb.d/migrations/V20__ensure_review_case_status_allows_ready_for_decision.sql
+\i /docker-entrypoint-initdb.d/migrations/V21__replace_legacy_revamp_review_case_status_constraint.sql
+\i /docker-entrypoint-initdb.d/migrations/V22__add_supplier_evaluator_assignments.sql

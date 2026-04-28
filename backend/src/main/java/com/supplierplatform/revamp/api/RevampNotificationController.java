@@ -21,7 +21,7 @@ import java.util.List;
 import java.util.UUID;
 
 @RestController
-@RequestMapping({"/api/v2/notifications", "/api/notifications"})
+@RequestMapping("/api/v2/notifications")
 @PreAuthorize("hasRole('ADMIN')")
 @RequiredArgsConstructor
 public class RevampNotificationController {

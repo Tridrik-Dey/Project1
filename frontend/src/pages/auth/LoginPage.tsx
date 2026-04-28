@@ -33,6 +33,9 @@ export function LoginPage() {
     if (normalized.includes("bad credentials")) {
       return t("auth.login.badCredentials");
     }
+    if (normalized.includes("account deactivated") || normalized.includes("user is inactive")) {
+      return "Account disattivato. Contatta un Super Admin per riattivarlo.";
+    }
     return rawMessage || t("auth.login.failed");
   }
 
