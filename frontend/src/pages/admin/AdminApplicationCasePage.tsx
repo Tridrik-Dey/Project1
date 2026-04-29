@@ -54,6 +54,11 @@ function appShortCode(applicationId: string): string {
   return `A-${applicationId.slice(0, 8).toUpperCase()}`;
 }
 
+function applicationDisplayCode(summary: RevampApplicationSummary | null): string {
+  if (!summary) return "—";
+  return summary.protocolCode?.trim() || appShortCode(summary.id);
+}
+
 function parsePayload(payloadJson?: string): SectionPayload | null {
   if (!payloadJson) return null;
   try {
@@ -289,7 +294,7 @@ export function AdminApplicationCasePage() {
     }
     const repName = toScalar(s1Payload?.legalRepresentativeName);
     if (repName) return repName;
-    return appShortCode(summary.id);
+    return applicationDisplayCode(summary);
   }, [s1Payload, summary]);
 
   const candidateMetaRows = useMemo(() => {
@@ -302,7 +307,7 @@ export function AdminApplicationCasePage() {
         value: [toScalar(s1Payload?.city), toScalar(s1Payload?.province)].filter(Boolean).join(" - ") || "n/d"
       });
       rows.push({ label: "CAP", value: toScalar(s1Payload?.postalCode) || "n/d" });
-      rows.push({ label: "Tipologia professionale", value: toScalar(s2Payload?.professionalType) || "n/d" });
+      rows.push({ label: "Tipologia professionale", value: toScalar(s2Payload?.tipologia) || toScalar(s2Payload?.professionalType) || "n/d" });
     } else {
       rows.push({ label: "Partita IVA", value: toScalar(s1Payload?.vatNumber) || "n/d" });
       rows.push({ label: "REA", value: toScalar(s1Payload?.reaNumber) || "n/d" });
@@ -527,7 +532,7 @@ export function AdminApplicationCasePage() {
             <div className="review-hero-meta-grid">
               <div className="review-hero-meta-item">
                 <span className="review-meta-label">Codice pratica</span>
-                <span className="review-meta-value">{summary ? appShortCode(summary.id) : "—"}</span>
+                <span className="review-meta-value">{applicationDisplayCode(summary)}</span>
               </div>
               <div className="review-hero-meta-item">
                 <span className="review-meta-label">Data invio</span>

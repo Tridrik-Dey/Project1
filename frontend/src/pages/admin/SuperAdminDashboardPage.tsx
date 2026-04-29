@@ -147,7 +147,7 @@ export function SuperAdminDashboardPage({
     ? Math.round((monthDelta / previousMonth.count) * 100)
     : null;
 
-  const approvalStatus = approvalRate === 0 ? "Da monitorare" : approvalRate >= 60 ? "Buono" : "Attenzione";
+  const approvalStatus = queue.length === 0 ? "Nessun dato" : approvalRate === 0 ? "Da monitorare" : approvalRate >= 60 ? "Buono" : "Attenzione";
   const reviewStatus = avgReviewDays === 0 ? "Nessuna revisione conclusa" : avgReviewDays <= 5 ? "In linea" : "Da migliorare";
   const expiryStatus = expiringProfilesCount === 0 ? "Sotto controllo" : expiringProfilesCount <= 5 ? "Attenzione" : "Priorita alta";
   const approvalMeter = Math.max(8, approvalRate);
@@ -555,7 +555,7 @@ export function SuperAdminDashboardPage({
                 </div>
                 <div className="superadmin-metric-value-wrap">
                   <strong>{approvalRate}%</strong>
-                  <span className={`superadmin-metric-state ${approvalRate === 0 ? "state-warn" : approvalRate >= 60 ? "state-ok" : "state-attention"}`}>{approvalStatus}</span>
+                  <span className={`superadmin-metric-state ${queue.length === 0 ? "state-info" : approvalRate === 0 ? "state-warn" : approvalRate >= 60 ? "state-ok" : "state-attention"}`}>{approvalStatus}</span>
                 </div>
               </div>
               <div className="superadmin-metric-progress"><span style={{ width: `${approvalMeter}%` }} /></div>

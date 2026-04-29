@@ -15,6 +15,17 @@ const PROFESSIONAL_TYPE_LABELS: Record<string, string> = {
   CONSULENTE: "Consulente",
   PSICOLOGO_COACH: "Psicologo / Coach",
   ALTRO: "Altro",
+  docente: "Docente / Formatore",
+  ricercatore: "Ricercatore / Valutatore",
+  cdo_lavoro: "Consulente del Lavoro",
+  commercialista: "Commercialista",
+  avvocato: "Avvocato",
+  psicologo: "Psicologo",
+  finanza: "Esperto Finanza Agevolata",
+  orientatore: "Orientatore Professionale",
+  coach: "Coach",
+  mediatore: "Mediatore del Lavoro",
+  altro: "Altro professionista",
 };
 
 export function AlboASection2({ payload }: { payload: P | null }) {
@@ -24,16 +35,22 @@ export function AlboASection2({ payload }: { payload: P | null }) {
     </SectionCard>
   );
 
-  const primaryType = str(payload.professionalType);
-  const secondaryRaw = Array.isArray(payload.secondaryProfessionalTypes)
-    ? (payload.secondaryProfessionalTypes as string[]).map((t) => PROFESSIONAL_TYPE_LABELS[t] ?? t)
+  const primaryType = str(payload.tipologia) || str(payload.professionalType);
+  const secondaryValues = Array.isArray(payload.multiRuoli)
+    ? payload.multiRuoli
+    : Array.isArray(payload.secondaryProfessionalTypes)
+      ? payload.secondaryProfessionalTypes
+      : [];
+  const secondaryRaw = Array.isArray(secondaryValues)
+    ? (secondaryValues as string[]).map((t) => PROFESSIONAL_TYPE_LABELS[t] ?? t)
     : [];
 
   return (
     <SectionCard icon={<Briefcase className="h-5 w-5" />} title="Sezione 2 — Tipologia Professionale" accent="blue">
       <FieldGrid fields={[
         { label: "Tipologia principale", value: PROFESSIONAL_TYPE_LABELS[primaryType] ?? primaryType },
-        { label: "Codice ATECO", value: str(payload.atecoCode) },
+        { label: "Tipologia backend", value: str(payload.tipologia) ? (PROFESSIONAL_TYPE_LABELS[str(payload.professionalType)] ?? str(payload.professionalType)) : "" },
+        { label: "Codice ATECO", value: str(payload.ateco) || str(payload.atecoCode) },
       ]} />
       {secondaryRaw.length > 0 ? (
         <div className="profile-subsection">

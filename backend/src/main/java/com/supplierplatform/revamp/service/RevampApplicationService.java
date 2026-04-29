@@ -199,6 +199,9 @@ public class RevampApplicationService {
         }
 
         RevampApplication saved = applicationRepository.save(application);
+        if (beforeStatus == ApplicationStatus.DRAFT) {
+            ensurePendingReviewCase(saved);
+        }
         String actorRole = saved.getApplicantUser() != null && saved.getApplicantUser().getRole() != null
                 ? saved.getApplicantUser().getRole().name()
                 : null;
@@ -215,6 +218,22 @@ public class RevampApplicationService {
                 "{\"protocolCode\":\"" + saved.getProtocolCode() + "\",\"applicantName\":\"" + esc(saved.getApplicantUser() != null ? saved.getApplicantUser().getFullName() : "") + "\"}"
         ));
         return applicationMapper.toSummary(saved);
+    }
+
+    private void ensurePendingReviewCase(RevampApplication application) {
+        List<RevampReviewCase> activeCases = reviewCaseRepository
+                .findByApplicationIdAndStatusNotInOrderByUpdatedAtDesc(
+                        application.getId(),
+                        List.of(ReviewCaseStatus.DECIDED, ReviewCaseStatus.CLOSED)
+                );
+        if (!activeCases.isEmpty()) {
+            return;
+        }
+
+        RevampReviewCase reviewCase = new RevampReviewCase();
+        reviewCase.setApplication(application);
+        reviewCase.setStatus(ReviewCaseStatus.PENDING_ASSIGNMENT);
+        reviewCaseRepository.save(reviewCase);
     }
 
     private void closeOpenIntegrationRequest(RevampApplication application) {

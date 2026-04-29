@@ -275,6 +275,8 @@ export function AdminDashboardPage() {
     queueItems: AdminReviewCaseSummary[],
     auditItems: AdminAuditEventRow[]
   ): SuperAdminMonthTrendPoint[] {
+    if (queueItems.length === 0 && auditItems.length === 0) return [];
+
     const now = new Date();
     const monthKeys: string[] = [];
     for (let i = 5; i >= 0; i -= 1) {

@@ -21,15 +21,18 @@ export function areRequiredSectionsComplete(
   registryType: string,
   sections: RevampSectionSnapshot[]
 ): boolean {
+  return getMissingRequiredSections(registryType, sections).length === 0;
+}
+
+export function getMissingRequiredSections(
+  registryType: string,
+  sections: RevampSectionSnapshot[]
+): string[] {
   const completed = new Set(
     sections.filter((section) => section.completed).map((section) => section.sectionKey)
   );
   const section3Key = resolveSection3Key(registryType, sections);
-  return completed.has("S1")
-    && completed.has("S2")
-    && completed.has(section3Key)
-    && completed.has("S4")
-    && completed.has("S5");
+  return ["S1", "S2", section3Key, "S4", "S5"].filter((sectionKey) => !completed.has(sectionKey));
 }
 
 function isCompleted(sectionKey: string, sections: RevampSectionSnapshot[]): boolean {
@@ -66,6 +69,6 @@ export function resolvePostRegisterPath(
   onboardingReady: boolean
 ): string {
   if (!featureOn) return "/supplier";
-  if (!onboardingReady || !draftId) return "/supplier";
+  if (!onboardingReady || !draftId) return "/apply";
   return `/application/${draftId}/step/1`;
 }

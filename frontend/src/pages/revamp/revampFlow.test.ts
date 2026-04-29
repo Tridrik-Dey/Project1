@@ -1,4 +1,4 @@
-import { areRequiredSectionsComplete, resolvePostRegisterPath, resolveSection3Key, resolveStepGuardRedirect } from "./revampFlow";
+import { areRequiredSectionsComplete, getMissingRequiredSections, resolvePostRegisterPath, resolveSection3Key, resolveStepGuardRedirect } from "./revampFlow";
 import type { RevampSectionSnapshot } from "../../api/revampApplicationApi";
 
 function section(
@@ -41,11 +41,25 @@ describe("revampFlow", () => {
 
     const missingS5 = sections.filter((s) => s.sectionKey !== "S5");
     expect(areRequiredSectionsComplete("ALBO_A", missingS5)).toBe(false);
+    expect(getMissingRequiredSections("ALBO_A", missingS5)).toEqual(["S5"]);
+  });
+
+  it("requires backend-completed sections for ALBO_B submit gating", () => {
+    const sections = [
+      section("S1", true),
+      section("S2", true),
+      section("S3", false),
+      section("S4", true),
+      section("S5", true)
+    ];
+    expect(areRequiredSectionsComplete("ALBO_B", sections)).toBe(false);
+    expect(getMissingRequiredSections("ALBO_B", sections)).toEqual(["S3"]);
   });
 
   it("computes register bootstrap destination path", () => {
     expect(resolvePostRegisterPath(false, "app-1", true)).toBe("/supplier");
-    expect(resolvePostRegisterPath(true, null, true)).toBe("/supplier");
+    expect(resolvePostRegisterPath(true, null, true)).toBe("/apply");
+    expect(resolvePostRegisterPath(true, null, false)).toBe("/apply");
     expect(resolvePostRegisterPath(true, "app-1", true)).toBe("/application/app-1/step/1");
   });
 

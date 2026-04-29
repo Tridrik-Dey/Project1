@@ -6,6 +6,7 @@ import java.util.UUID;
 public record RevampReviewCaseSummaryDto(
         UUID id,
         UUID applicationId,
+        String protocolCode,
         String status,
         String decision,
         UUID assignedToUserId,
@@ -43,6 +44,7 @@ public record RevampReviewCaseSummaryDto(
         this(
                 id,
                 applicationId,
+                null,
                 status,
                 decision,
                 assignedToUserId,

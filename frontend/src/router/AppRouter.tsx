@@ -23,6 +23,19 @@ const RevampApplicationRecapPage = lazy(() => import("../pages/revamp/RevampAppl
 const RevampApplicationSubmittedPage = lazy(() => import("../pages/revamp/RevampApplicationSubmittedPage").then((m) => ({ default: m.RevampApplicationSubmittedPage })));
 const RevampEntryPage = lazy(() => import("../pages/revamp/RevampEntryPage").then((m) => ({ default: m.RevampEntryPage })));
 const RevampRegistryStartPage = lazy(() => import("../pages/revamp/RevampRegistryStartPage").then((m) => ({ default: m.RevampRegistryStartPage })));
+const RevampStep2TipologiaPage = lazy(() => import("../pages/revamp/RevampStep2TipologiaPage").then((m) => ({ default: m.RevampStep2TipologiaPage })));
+const RevampStep3CompetenzePage = lazy(() => import("../pages/revamp/RevampStep3CompetenzePage").then((m) => ({ default: m.RevampStep3CompetenzePage })));
+const RevampStep4DisponibilitaPage = lazy(() => import("../pages/revamp/RevampStep4DisponibilitaPage").then((m) => ({ default: m.RevampStep4DisponibilitaPage })));
+const RevampStep5DichiarazioniPage = lazy(() => import("../pages/revamp/RevampStep5DichiarazioniPage").then((m) => ({ default: m.RevampStep5DichiarazioniPage })));
+const RevampRecapPage = lazy(() => import("../pages/revamp/RevampRecapPage").then((m) => ({ default: m.RevampRecapPage })));
+const RevampSupplierDashboardPage = lazy(() => import("../pages/revamp/RevampSupplierDashboardPage").then((m) => ({ default: m.RevampSupplierDashboardPage })));
+const RevampSupplierHomeRedirect = lazy(() => import("../pages/revamp/RevampSupplierHomeRedirect").then((m) => ({ default: m.RevampSupplierHomeRedirect })));
+const RevampAlboBStep1DatiAziendaliPage = lazy(() => import("../pages/revamp/RevampAlboBStep1DatiAziendaliPage").then((m) => ({ default: m.RevampAlboBStep1DatiAziendaliPage })));
+const RevampAlboBStep2StrutturaDimensionePage = lazy(() => import("../pages/revamp/RevampAlboBStep2StrutturaDimensionePage").then((m) => ({ default: m.RevampAlboBStep2StrutturaDimensionePage })));
+const RevampAlboBStep3ServiziPage = lazy(() => import("../pages/revamp/RevampAlboBStep3ServiziPage").then((m) => ({ default: m.RevampAlboBStep3ServiziPage })));
+const RevampAlboBStep4CertificazioniPage = lazy(() => import("../pages/revamp/RevampAlboBStep4CertificazioniPage").then((m) => ({ default: m.RevampAlboBStep4CertificazioniPage })));
+const RevampAlboBStep5DichiarazioniPage = lazy(() => import("../pages/revamp/RevampAlboBStep5DichiarazioniPage").then((m) => ({ default: m.RevampAlboBStep5DichiarazioniPage })));
+const RevampAlboBRecapPage = lazy(() => import("../pages/revamp/RevampAlboBRecapPage").then((m) => ({ default: m.RevampAlboBRecapPage })));
 const RevampInviteEntryPage = lazy(() => import("../pages/revamp/RevampInviteEntryPage").then((m) => ({ default: m.RevampInviteEntryPage })));
 const SupplierDashboardPage = lazy(() => import("../pages/supplier/SupplierDashboardPage").then((m) => ({ default: m.SupplierDashboardPage })));
 const SupplierCommunicationsPage = lazy(() => import("../pages/supplier/SupplierCommunicationsPage").then((m) => ({ default: m.SupplierCommunicationsPage })));
@@ -93,6 +106,7 @@ export function AppRouter() {
           <Route path="/login" element={auth ? <Navigate to={authenticatedHome} replace /> : <LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
           <Route path="/activate-account" element={<AcceptAdminInvitePage />} />
+          <Route path="/accept-admin-invite" element={<AcceptAdminInvitePage />} />
           {featureFlags.newWizardAb ? (
             <Route
               path="/verify-otp"
@@ -104,7 +118,149 @@ export function AppRouter() {
             />
           ) : null}
           {featureFlags.newWizardAb ? <Route path="/apply" element={<RevampEntryPage />} /> : null}
+          {featureFlags.newWizardAb ? (
+            <Route
+              path="/apply/albo-b"
+              element={(
+                <RequireAuth allowedRoles={["SUPPLIER"]}>
+                  <RequireRevampOtpForSupplier>
+                    <RevampAlboBStep1DatiAziendaliPage />
+                  </RequireRevampOtpForSupplier>
+                </RequireAuth>
+              )}
+            />
+          ) : null}
+          {featureFlags.newWizardAb ? (
+            <Route
+              path="/apply/albo-b/step/2"
+              element={(
+                <RequireAuth allowedRoles={["SUPPLIER"]}>
+                  <RequireRevampOtpForSupplier>
+                    <RevampAlboBStep2StrutturaDimensionePage />
+                  </RequireRevampOtpForSupplier>
+                </RequireAuth>
+              )}
+            />
+          ) : null}
+          {featureFlags.newWizardAb ? (
+            <Route
+              path="/apply/albo-b/step/3"
+              element={(
+                <RequireAuth allowedRoles={["SUPPLIER"]}>
+                  <RequireRevampOtpForSupplier>
+                    <RevampAlboBStep3ServiziPage />
+                  </RequireRevampOtpForSupplier>
+                </RequireAuth>
+              )}
+            />
+          ) : null}
+          {featureFlags.newWizardAb ? (
+            <Route
+              path="/apply/albo-b/step/4"
+              element={(
+                <RequireAuth allowedRoles={["SUPPLIER"]}>
+                  <RequireRevampOtpForSupplier>
+                    <RevampAlboBStep4CertificazioniPage />
+                  </RequireRevampOtpForSupplier>
+                </RequireAuth>
+              )}
+            />
+          ) : null}
+          {featureFlags.newWizardAb ? (
+            <Route
+              path="/apply/albo-b/step/5"
+              element={(
+                <RequireAuth allowedRoles={["SUPPLIER"]}>
+                  <RequireRevampOtpForSupplier>
+                    <RevampAlboBStep5DichiarazioniPage />
+                  </RequireRevampOtpForSupplier>
+                </RequireAuth>
+              )}
+            />
+          ) : null}
+          {featureFlags.newWizardAb ? (
+            <Route
+              path="/apply/albo-b/recap"
+              element={(
+                <RequireAuth allowedRoles={["SUPPLIER"]}>
+                  <RequireRevampOtpForSupplier>
+                    <RevampAlboBRecapPage />
+                  </RequireRevampOtpForSupplier>
+                </RequireAuth>
+              )}
+            />
+          ) : null}
           {featureFlags.newWizardAb ? <Route path="/apply/:registryType" element={<RevampRegistryStartPage />} /> : null}
+          {featureFlags.newWizardAb ? (
+            <Route
+              path="/apply/:registryType/step/2"
+              element={(
+                <RequireAuth allowedRoles={["SUPPLIER"]}>
+                  <RequireRevampOtpForSupplier>
+                    <RevampStep2TipologiaPage />
+                  </RequireRevampOtpForSupplier>
+                </RequireAuth>
+              )}
+            />
+          ) : null}
+          {featureFlags.newWizardAb ? (
+            <Route
+              path="/apply/:registryType/step/3"
+              element={(
+                <RequireAuth allowedRoles={["SUPPLIER"]}>
+                  <RequireRevampOtpForSupplier>
+                    <RevampStep3CompetenzePage />
+                  </RequireRevampOtpForSupplier>
+                </RequireAuth>
+              )}
+            />
+          ) : null}
+          {featureFlags.newWizardAb ? (
+            <Route
+              path="/apply/:registryType/step/4"
+              element={(
+                <RequireAuth allowedRoles={["SUPPLIER"]}>
+                  <RequireRevampOtpForSupplier>
+                    <RevampStep4DisponibilitaPage />
+                  </RequireRevampOtpForSupplier>
+                </RequireAuth>
+              )}
+            />
+          ) : null}
+          {featureFlags.newWizardAb ? (
+            <Route
+              path="/apply/:registryType/step/5"
+              element={(
+                <RequireAuth allowedRoles={["SUPPLIER"]}>
+                  <RequireRevampOtpForSupplier>
+                    <RevampStep5DichiarazioniPage />
+                  </RequireRevampOtpForSupplier>
+                </RequireAuth>
+              )}
+            />
+          ) : null}
+          {featureFlags.newWizardAb ? (
+            <Route
+              path="/apply/:registryType/recap"
+              element={(
+                <RequireAuth allowedRoles={["SUPPLIER"]}>
+                  <RequireRevampOtpForSupplier>
+                    <RevampRecapPage />
+                  </RequireRevampOtpForSupplier>
+                </RequireAuth>
+              )}
+            />
+          ) : null}
+          {featureFlags.newWizardAb ? (
+            <Route
+              path="/apply/:registryType/my-profile"
+              element={(
+                <RequireAuth allowedRoles={["SUPPLIER"]}>
+                  <RevampSupplierDashboardPage />
+                </RequireAuth>
+              )}
+            />
+          ) : null}
           {featureFlags.newWizardAb ? <Route path="/invite/:token" element={<RevampInviteEntryPage />} /> : null}
           {featureFlags.newWizardAb ? (
             <Route
@@ -202,7 +358,7 @@ export function AppRouter() {
             path="/supplier/dashboard"
             element={
               <RequireAuth allowedRoles={["SUPPLIER"]}>
-                <SupplierDashboardPage />
+                {featureFlags.newWizardAb ? <RevampSupplierHomeRedirect /> : <SupplierDashboardPage />}
               </RequireAuth>
             }
           />
@@ -210,7 +366,7 @@ export function AppRouter() {
             path="/supplier/profile"
             element={
               <RequireAuth allowedRoles={["SUPPLIER"]}>
-                <SupplierDashboardPage initialStep="profile" />
+                {featureFlags.newWizardAb ? <RevampSupplierHomeRedirect /> : <SupplierDashboardPage initialStep="profile" />}
               </RequireAuth>
             }
           />
@@ -218,7 +374,7 @@ export function AppRouter() {
             path="/supplier/documents"
             element={
               <RequireAuth allowedRoles={["SUPPLIER"]}>
-                <SupplierDashboardPage initialStep="documents" />
+                {featureFlags.newWizardAb ? <RevampSupplierHomeRedirect /> : <SupplierDashboardPage initialStep="documents" />}
               </RequireAuth>
             }
           />

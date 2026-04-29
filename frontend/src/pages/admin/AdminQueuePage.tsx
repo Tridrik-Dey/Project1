@@ -76,6 +76,10 @@ function appCode(applicationId: string): string {
   return `APP-${applicationId.slice(0, 8).toUpperCase()}`;
 }
 
+function displayAppCode(row: AdminReviewCaseSummary): string {
+  return row.protocolCode?.trim() || appCode(row.applicationId);
+}
+
 function supplierResponded(row: AdminReviewCaseSummary): boolean {
   return row.latestIntegrationRequestStatus === "ANSWERED" && Boolean(row.latestIntegrationSupplierRespondedAt);
 }
@@ -429,7 +433,7 @@ export function AdminQueuePage() {
                   <div key={row.id} className={`admin-queue-row admin-unified-table-row${recentlyAssigned === row.applicationId ? " queue-row-highlight" : ""}`}>
                     <div className="queue-main-cell">
                       <div className="queue-app-code" tabIndex={0} aria-label={`UUID: ${row.applicationId}`}>
-                        <strong>{appCode(row.applicationId)}</strong>
+                        <strong>{displayAppCode(row)}</strong>
                         <span className="queue-uuid-tooltip" role="tooltip">UUID: {row.applicationId}</span>
                       </div>
                     </div>

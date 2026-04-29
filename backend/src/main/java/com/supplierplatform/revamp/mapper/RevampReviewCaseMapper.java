@@ -27,6 +27,7 @@ public class RevampReviewCaseMapper {
         return new RevampReviewCaseSummaryDto(
                 reviewCase.getId(),
                 reviewCase.getApplication() != null ? reviewCase.getApplication().getId() : null,
+                reviewCase.getApplication() != null ? reviewCase.getApplication().getProtocolCode() : null,
                 reviewCase.getStatus() != null ? reviewCase.getStatus().name() : null,
                 reviewCase.getDecision() != null ? reviewCase.getDecision().name() : null,
                 reviewCase.getAssignedToUser() != null ? reviewCase.getAssignedToUser().getId() : null,

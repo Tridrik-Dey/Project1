@@ -3,6 +3,7 @@ import { apiRequest } from "./http";
 export interface AdminReviewCaseSummary {
   id: string;
   applicationId: string;
+  protocolCode?: string | null;
   status: string;
   decision?: string | null;
   assignedToUserId?: string | null;

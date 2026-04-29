@@ -215,6 +215,7 @@ export function AdminReportsPage() {
   ];
   const activeRatio = kpis.totalSuppliers > 0 ? (kpis.activeSuppliers / kpis.totalSuppliers) * 100 : 0;
   const approvalRatio = analytics.approvalRatePct;
+  const hasApprovalData = analytics.evaluationsYtd > 0 || analytics.newRegistrationsYtd > 0;
   const monthlyData = analytics.monthlyPoints;
   const reportFilters: AdminReportFilters = useMemo(() => ({
     year,
@@ -348,7 +349,7 @@ export function AdminReportsPage() {
       label: "Fornitori attivi (tot.)",
       value: kpis.totalSuppliers,
       icon: <Users className="h-4 w-4" />,
-      trend: `+${Math.max(0, Math.round(activeRatio / 4))} vs anno`,
+      trend: kpis.totalSuppliers > 0 ? `${activeRatio.toFixed(0)}% attivi` : "Nessun dato",
       tone: "info",
       level: "info",
       levelLabel: kpis.totalSuppliers > 0 ? "Operativo" : "Vuoto"
@@ -358,7 +359,7 @@ export function AdminReportsPage() {
       label: "Di cui Albo A",
       value: analytics.alboAActive,
       icon: <Users className="h-4 w-4" />,
-      trend: `+${Math.max(0, Math.round(analytics.alboAActive * 0.05))}`,
+      trend: analytics.alboAActive > 0 ? `${analytics.alboAActive} profili` : "Nessun dato",
       tone: "info",
       level: "info",
       levelLabel: analytics.alboAActive > 0 ? "Attivo" : "Vuoto"
@@ -368,7 +369,7 @@ export function AdminReportsPage() {
       label: "Di cui Albo B",
       value: analytics.alboBActive,
       icon: <Building2 className="h-4 w-4" />,
-      trend: `+${Math.max(0, Math.round(analytics.alboBActive * 0.05))}`,
+      trend: analytics.alboBActive > 0 ? `${analytics.alboBActive} profili` : "Nessun dato",
       tone: "ok",
       level: "ok",
       levelLabel: analytics.alboBActive > 0 ? "Attivo" : "Vuoto"
@@ -378,17 +379,17 @@ export function AdminReportsPage() {
       label: "Nuove iscrizioni (YTD)",
       value: analytics.newRegistrationsYtd,
       icon: <UserPlus className="h-4 w-4" />,
-      trend: `+${Math.max(0, Math.round(analytics.newRegistrationsYtd * 0.1))} vs 2024`,
+      trend: analytics.newRegistrationsYtd > 0 ? `Anno ${year}` : "Nessun dato",
       tone: "attention",
       level: "attention",
-      levelLabel: analytics.newRegistrationsYtd > 0 ? "In crescita" : "Stabile"
+      levelLabel: analytics.newRegistrationsYtd > 0 ? "Presente" : "Vuoto"
     },
     {
       key: "eval",
       label: "Valutazioni (YTD)",
       value: analytics.evaluationsYtd,
       icon: <ClipboardCheck className="h-4 w-4" />,
-      trend: `Media ${Math.max(1, Math.min(5, Number((4 + activeRatio / 200).toFixed(1))))} / 5`,
+      trend: analytics.evaluationsYtd > 0 ? `${analytics.evaluationsYtd} valutazioni` : "Nessun dato",
       tone: "attention",
       level: "attention",
       levelLabel: analytics.evaluationsYtd > 0 ? "Attivo" : "Nessuna"
@@ -398,10 +399,10 @@ export function AdminReportsPage() {
       label: "Tasso approvazione",
       value: `${approvalRatio.toFixed(0)}%`,
       icon: <TrendingUp className="h-4 w-4" />,
-      trend: "target 85%",
+      trend: hasApprovalData ? "Dato reale" : "Nessun dato",
       tone: "ok",
-      level: approvalRatio >= 85 ? "ok" : approvalRatio >= 70 ? "attention" : "critical",
-      levelLabel: approvalRatio >= 85 ? "In target" : approvalRatio >= 70 ? "Attenzione" : "Critico"
+      level: !hasApprovalData ? "info" : approvalRatio >= 85 ? "ok" : approvalRatio >= 70 ? "attention" : "critical",
+      levelLabel: !hasApprovalData ? "Vuoto" : approvalRatio >= 85 ? "In target" : approvalRatio >= 70 ? "Attenzione" : "Critico"
     }
   ] as const;
 

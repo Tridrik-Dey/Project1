@@ -173,7 +173,13 @@ public class RevampSectionPayloadValidator {
     private void validateAlboBS4(ObjectNode payload, boolean completed) {
         if (!completed) return;
         requireAnyNonBlank(payload, "iso9001");
-        requireAnyNonBlank(payload, "accreditationSummary", "accreditations");
+        boolean hasLegacyAccreditation =
+                !isBlank(extractText(payload, "accreditationSummary"))
+                        || (payload.path("accreditations").isArray() && payload.path("accreditations").size() > 0);
+        if (!hasLegacyAccreditation) {
+            requireAnyNonBlank(payload, "accreditamentoFormazione", "accreditationTraining");
+            requireAnyNonBlank(payload, "accreditamentoServiziLavoro", "employmentServicesAccreditation");
+        }
 
         Set<String> types = extractAndValidateAttachmentTypes(payload);
         if (!types.contains("VISURA_CAMERALE")) {
@@ -185,6 +191,10 @@ public class RevampSectionPayloadValidator {
         boolean certificationsDeclared =
                 "YES".equalsIgnoreCase(extractText(payload, "iso9001"))
                         || !isBlank(extractText(payload, "accreditationSummary"))
+                        || isAffirmative(extractText(payload, "accreditamentoFormazione"))
+                        || isAffirmative(extractText(payload, "accreditamentoServiziLavoro"))
+                        || isAffirmative(extractText(payload, "accreditationTraining"))
+                        || isAffirmative(extractText(payload, "employmentServicesAccreditation"))
                         || (payload.path("accreditations").isArray() && payload.path("accreditations").size() > 0);
         if (certificationsDeclared && !types.contains("CERTIFICATION")) {
             throw new IllegalArgumentException("S4 requires CERTIFICATION attachment metadata when accreditations are declared");
@@ -585,5 +595,11 @@ public class RevampSectionPayloadValidator {
 
     private boolean isBlank(String value) {
         return value == null || value.trim().isEmpty();
+    }
+
+    private boolean isAffirmative(String value) {
+        if (value == null) return false;
+        String normalized = value.trim().toUpperCase(Locale.ROOT);
+        return "SI".equals(normalized) || "SÌ".equals(normalized) || "YES".equals(normalized) || "TRUE".equals(normalized);
     }
 }

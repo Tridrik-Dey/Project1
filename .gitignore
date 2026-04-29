@@ -43,9 +43,17 @@ _done*.txt
 _req*.txt
 _mvn_test.txt
 _sp_test.txt
+start-test.txt
+tmp-*.json
+backend/.spawn*.txt
 
 # Debug screenshots
 frontend/.*.png
+report-*.png
+report-*.pdf
+
+# TypeScript incremental build cache
+*.tsbuildinfo
 
 # Vite generated files
 frontend/vite.config.js
