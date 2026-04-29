@@ -117,7 +117,18 @@ export function AppRouter() {
               )}
             />
           ) : null}
-          {featureFlags.newWizardAb ? <Route path="/apply" element={<RevampEntryPage />} /> : null}
+          {featureFlags.newWizardAb ? (
+            <Route
+              path="/apply"
+              element={(
+                <RequireAuth allowedRoles={["SUPPLIER"]}>
+                  <RequireRevampOtpForSupplier>
+                    <RevampEntryPage />
+                  </RequireRevampOtpForSupplier>
+                </RequireAuth>
+              )}
+            />
+          ) : null}
           {featureFlags.newWizardAb ? (
             <Route
               path="/apply/albo-b"
@@ -190,7 +201,18 @@ export function AppRouter() {
               )}
             />
           ) : null}
-          {featureFlags.newWizardAb ? <Route path="/apply/:registryType" element={<RevampRegistryStartPage />} /> : null}
+          {featureFlags.newWizardAb ? (
+            <Route
+              path="/apply/:registryType"
+              element={(
+                <RequireAuth allowedRoles={["SUPPLIER"]}>
+                  <RequireRevampOtpForSupplier>
+                    <RevampRegistryStartPage />
+                  </RequireRevampOtpForSupplier>
+                </RequireAuth>
+              )}
+            />
+          ) : null}
           {featureFlags.newWizardAb ? (
             <Route
               path="/apply/:registryType/step/2"

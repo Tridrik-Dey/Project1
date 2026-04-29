@@ -9,6 +9,10 @@ function registryPath(registryType?: string | null): string | null {
   return null;
 }
 
+function isSentApplication(status?: string | null): boolean {
+  return Boolean(status && status !== "DRAFT");
+}
+
 export function RevampSupplierHomeRedirect() {
   const { auth } = useAuth();
   const [redirectTo, setRedirectTo] = useState<string | null>(null);
@@ -25,7 +29,7 @@ export function RevampSupplierHomeRedirect() {
       try {
         const latest = await getMyLatestRevampApplication(token);
         if (cancelled) return;
-        setRedirectTo(registryPath(latest?.registryType) ?? "/apply");
+        setRedirectTo(isSentApplication(latest?.status) ? (registryPath(latest?.registryType) ?? "/apply") : "/apply");
       } catch {
         if (!cancelled) setRedirectTo("/apply");
       } finally {

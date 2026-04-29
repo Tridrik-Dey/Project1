@@ -2,7 +2,8 @@ import { ChangeEvent, useEffect, useRef, useState } from "react";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, ArrowRight, Info, Plus, Save, Trash2, Upload } from "lucide-react";
 import { useAuth } from "../../auth/AuthContext";
-import { getMyLatestRevampApplication, getRevampApplicationSections, saveRevampApplicationSection } from "../../api/revampApplicationApi";
+import { createRevampApplicationDraft, getMyLatestRevampApplication, getRevampApplicationSections, saveRevampApplicationSection, uploadRevampAttachment } from "../../api/revampApplicationApi";
+import type { AttachmentUploadResult } from "../../api/revampApplicationApi";
 import { AREE_TEMATICHE } from "./RevampStep3CompetenzePage";
 
 const NAVY  = "#0f2a52";
@@ -130,16 +131,13 @@ function SectionCard({ title, desc, accent, badge, children }: { title: string; 
   );
 }
 
-function FileUpload({ label, required, hint, tooltip, accept = ".pdf", maxMB = 5, value, onChange }: {
+function FileUpload({ label, required, hint, tooltip, accept = ".pdf", maxMB = 5, uploading = false, result = null, onSelect }: {
   label: string; required?: boolean; hint?: string; tooltip?: string; accept?: string; maxMB?: number;
-  value: File | null; onChange: (f: File | null) => void;
+  uploading?: boolean; result?: AttachmentUploadResult | null;
+  onSelect: (f: File) => void;
 }) {
   const ref = useRef<HTMLInputElement>(null);
   const [showTip, setShowTip] = useState(false);
-  function handleChange(e: ChangeEvent<HTMLInputElement>) {
-    const f = e.target.files?.[0] ?? null;
-    onChange(f);
-  }
   return (
     <div style={COL}>
       <span style={{ ...LBL, display: "flex", alignItems: "center", gap: 4 }}>
@@ -164,15 +162,18 @@ function FileUpload({ label, required, hint, tooltip, accept = ".pdf", maxMB = 5
         )}
       </span>
       <div
-        onClick={() => ref.current?.click()}
-        style={{ border: "1.5px dashed #d1d5db", borderRadius: 6, padding: "14px 16px", cursor: "pointer", background: value ? "#f0fdf4" : "#fafafa", display: "flex", alignItems: "center", gap: 10 }}
+        onClick={() => !uploading && ref.current?.click()}
+        style={{ border: "1.5px dashed #d1d5db", borderRadius: 6, padding: "14px 16px", cursor: uploading ? "default" : "pointer", background: result ? "#f0fdf4" : "#fafafa", display: "flex", alignItems: "center", gap: 10 }}
       >
-        <Upload size={16} color={value ? "#16a34a" : "#9ca3af"} />
-        {value
-          ? <span style={{ fontSize: "0.82rem", color: "#16a34a", fontWeight: 600 }}>✓ {value.name}</span>
-          : <span style={{ fontSize: "0.82rem", color: "#9ca3af" }}>Clicca per caricare — PDF max {maxMB} MB</span>}
+        <Upload size={16} color={result ? "#16a34a" : "#9ca3af"} />
+        {uploading
+          ? <span style={{ fontSize: "0.82rem", color: MUTED }}>Caricamento in corso...</span>
+          : result
+            ? <span style={{ fontSize: "0.82rem", color: "#16a34a", fontWeight: 600 }}>✓ {result.fileName}</span>
+            : <span style={{ fontSize: "0.82rem", color: "#9ca3af" }}>Clicca per caricare — PDF max {maxMB} MB</span>}
       </div>
-      <input ref={ref} type="file" accept={accept} style={{ display: "none" }} onChange={handleChange} />
+      <input ref={ref} type="file" accept={accept} style={{ display: "none" }} disabled={uploading}
+        onChange={e => { const f = e.target.files?.[0]; if (f) onSelect(f); }} />
     </div>
   );
 }
@@ -258,18 +259,22 @@ export function RevampStep4DisponibilitaPage() {
   function removeRef(idx: number) { setReferenze(prev => prev.filter((_, i) => i !== idx)); }
 
   /* ── 3A F — Allegati ── */
-  const [cvFile, setCvFile] = useState<File | null>(null);
-  const [certFile, setCertFile] = useState<File | null>(null);
+  const [cvAttachment, setCvAttachment] = useState<AttachmentUploadResult | null>(null);
+  const [cvUploading, setCvUploading] = useState(false);
+  const [certAttachment, setCertAttachment] = useState<AttachmentUploadResult | null>(null);
+  const [certUploading, setCertUploading] = useState(false);
 
   /* ── 3B — Disponibilità e CV ── */
   const [areaTerrB, setAreaTerrB] = useState("");
   const [tariffaOraB, setTariffaOraB] = useState("");
-  const [cvFileB, setCvFileB] = useState<File | null>(null);
+  const [cvAttachmentB, setCvAttachmentB] = useState<AttachmentUploadResult | null>(null);
+  const [cvUploadingB, setCvUploadingB] = useState(false);
 
   /* ── shared ── */
   const [errors, setErrors]   = useState<Record<string, string>>({});
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [uploadToast, setUploadToast] = useState<string | null>(null);
 
   useEffect(() => {
     if (!auth?.token) return;
@@ -286,6 +291,18 @@ export function RevampStep4DisponibilitaPage() {
       if (s4.tariffaOra)     setTariffaOra(s4.tariffaOra as string);
       if (s4.areaTerrB)      setAreaTerrB(s4.areaTerrB as string);
       if (s4.tariffaOraB)    setTariffaOraB(s4.tariffaOraB as string);
+      if (Array.isArray(s4.attachments)) {
+        type AttMeta = { documentType: string; fileName: string; storageKey: string; mimeType: string; sizeBytes: number };
+        for (const att of s4.attachments as AttMeta[]) {
+          if (!att.fileName || !att.storageKey) continue;
+          const result: AttachmentUploadResult = { fileName: att.fileName, storageKey: att.storageKey, mimeType: att.mimeType, sizeBytes: att.sizeBytes };
+          if (att.documentType === "CV") {
+            if (isDocente) setCvAttachment(result); else setCvAttachmentB(result);
+          } else if (att.documentType === "CERTIFICATION") {
+            setCertAttachment(result);
+          }
+        }
+      }
     }
 
     const existingAppId = sessionStorage.getItem("revamp_applicationId");
@@ -325,6 +342,47 @@ export function RevampStep4DisponibilitaPage() {
     } catch { /* best-effort */ }
   }
 
+  function showToast(msg: string) {
+    setUploadToast(msg);
+    setTimeout(() => setUploadToast(null), 4000);
+  }
+
+  async function handleFileUpload(
+    file: File,
+    maxMB: number,
+    setUploading: (v: boolean) => void,
+    setResult: (v: AttachmentUploadResult) => void,
+    clearErrKey?: string
+  ) {
+    if (!auth?.token) return;
+    if (file.size > maxMB * 1024 * 1024) {
+      showToast(`Il file è troppo grande. Massimo ${maxMB} MB.`);
+      return;
+    }
+    let appId = sessionStorage.getItem("revamp_applicationId");
+    if (!appId) {
+      try {
+        const registryType = isA ? "ALBO_A" : "ALBO_B";
+        const draft = await createRevampApplicationDraft({ registryType, sourceChannel: "PUBLIC" }, auth.token);
+        appId = draft.id;
+        sessionStorage.setItem("revamp_applicationId", appId);
+      } catch {
+        showToast("Impossibile avviare la domanda. Riprova.");
+        return;
+      }
+    }
+    setUploading(true);
+    try {
+      const result = await uploadRevampAttachment(appId, file, auth.token);
+      setResult(result);
+      if (clearErrKey) clearErr(clearErrKey);
+    } catch {
+      showToast("Caricamento file non riuscito. Riprova.");
+    } finally {
+      setUploading(false);
+    }
+  }
+
   function validate(): Record<string, string> {
     const e: Record<string, string> = {};
     if (isDocente) {
@@ -341,10 +399,10 @@ export function RevampStep4DisponibilitaPage() {
         if (!esp.modalita)          e[`esp_${i}_modalita`]       = "Obbligatorio.";
         if (esp.finanziata === "si" && !esp.fondoProgramma.trim()) e[`esp_${i}_fondoProgramma`] = "Indica il fondo o il programma.";
       }
-      if (!cvFile) e.cv = "Il Curriculum Vitae è obbligatorio.";
+      if (!cvAttachment) e.cv = "Il Curriculum Vitae è obbligatorio.";
     } else {
       if (!areaTerrB.trim()) e.areaTerrB = "Campo obbligatorio.";
-      if (!cvFileB) e.cv = "Il Curriculum Vitae è obbligatorio.";
+      if (!cvAttachmentB) e.cv = "Il Curriculum Vitae è obbligatorio.";
     }
     return e;
   }
@@ -354,7 +412,7 @@ export function RevampStep4DisponibilitaPage() {
     const errs = validate();
     if (Object.keys(errs).length) { setErrors(errs); return; }
     handleSave();
-    const cvFileName = cvFile?.name ?? cvFileB?.name ?? null;
+    const activeCv = cvAttachment ?? cvAttachmentB;
     sessionStorage.setItem("revamp_s4", JSON.stringify({
       disponibilita, areeSpecifiche, tariffaGiorn, tariffaOra,
       areaTerrB, tariffaOraB,
@@ -362,36 +420,37 @@ export function RevampStep4DisponibilitaPage() {
       committenti: esperienze.map(e => e.committente),
       tipiIntervento: esperienze.map(e => e.tipoIntervento),
       periodi: esperienze.map(e => `${e.periodoFrom}–${e.periodoTo}`),
-      cvName: cvFileName,
-      certName: certFile?.name ?? null,
+      cvName: activeCv?.fileName ?? null,
+      certName: certAttachment?.fileName ?? null,
     }));
     if (auth?.token && isA) {
       try {
         const appId = sessionStorage.getItem("revamp_applicationId");
         if (appId) {
           if (!isDocente) {
-            /* Complete S3B now that we have tariff and territory */
             const s3Raw = JSON.parse(sessionStorage.getItem("revamp_s3") ?? "{}") as Record<string, unknown>;
+            const rawServizi = Array.isArray(s3Raw.servizi) ? (s3Raw.servizi as string[]) : [];
+            const altroServ = typeof s3Raw.altroServ === "string" ? s3Raw.altroServ.trim() : "";
+            const services = rawServizi.length > 0 ? rawServizi : (altroServ ? [altroServ] : []);
             const s3bPayload = {
               ...s3Raw,
               professionalOrder: s3Raw.ordine ?? "",
               highestTitle: s3Raw.titoloB ?? "",
               studyArea: s3Raw.ambitoB ?? "",
               experienceBand: s3Raw.anniEsp ?? "",
-              services: s3Raw.servizi ?? [],
+              services,
               hourlyRateRange: tariffaOraB || "Non indicata",
               territory: { regionsCsv: "", provincesCsv: areaTerrB },
             };
             await saveRevampApplicationSection(appId, "S3B", JSON.stringify(s3bPayload), true, auth.token);
           }
-          /* S4: include placeholder CV attachment so section can be marked complete */
-          const cvAttachment = cvFileName
-            ? { documentType: "CV", fileName: cvFileName, storageKey: "upload-pending" }
-            : { documentType: "CV", fileName: "Curriculum_Vitae.pdf", storageKey: "upload-pending" };
+          const attachments = [];
+          if (activeCv) attachments.push({ documentType: "CV", fileName: activeCv.fileName, storageKey: activeCv.storageKey, mimeType: activeCv.mimeType, sizeBytes: activeCv.sizeBytes });
+          if (certAttachment) attachments.push({ documentType: "CERTIFICATION", fileName: certAttachment.fileName, storageKey: certAttachment.storageKey, mimeType: certAttachment.mimeType, sizeBytes: certAttachment.sizeBytes });
           const s4Payload = {
             ...JSON.parse(sessionStorage.getItem("revamp_s4") ?? "{}"),
             operationalCapacity: isDocente ? (disponibilita || "disponibile") : (areaTerrB || "disponibile"),
-            attachments: [cvAttachment],
+            attachments,
           };
           await saveRevampApplicationSection(appId, "S4", JSON.stringify(s4Payload), true, auth.token);
         }
@@ -417,6 +476,11 @@ export function RevampStep4DisponibilitaPage() {
 
   return (
     <div style={{ margin: "-1rem", background: "#f0f4f8", minHeight: "100%" }}>
+      {uploadToast && (
+        <div style={{ position: "fixed", top: 20, right: 24, zIndex: 9999, background: "#1f2937", color: "#fff", padding: "10px 16px", borderRadius: 8, fontSize: "0.82rem", fontWeight: 500, boxShadow: "0 4px 12px rgba(0,0,0,0.2)", maxWidth: 320 }}>
+          {uploadToast}
+        </div>
+      )}
       <PageHeader title={title} subtitle={subtitle} savedAt={savedAt} onSave={() => void handleSaveDraft()} />
       <StepBar active={3} accent={accent} />
 
@@ -579,9 +643,11 @@ export function RevampStep4DisponibilitaPage() {
               )}
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
                 <FileUpload label="Curriculum Vitae aggiornato" required hint="PDF max 5 MB" tooltip="deve includere le principali esperienze di docenza"
-                  value={cvFile} onChange={f => { setCvFile(f); clearErr("cv"); }} />
+                  uploading={cvUploading} result={cvAttachment}
+                  onSelect={f => void handleFileUpload(f, 5, setCvUploading, setCvAttachment, "cv")} />
                 <FileUpload label="Certificazioni e attestati" hint="opzionale — PDF max 5 MB"
-                  value={certFile} onChange={f => setCertFile(f)} />
+                  uploading={certUploading} result={certAttachment}
+                  onSelect={f => void handleFileUpload(f, 5, setCertUploading, setCertAttachment)} />
               </div>
             </SectionCard>
           </>
@@ -612,7 +678,8 @@ export function RevampStep4DisponibilitaPage() {
                 <div style={{ background: "#fff5f5", border: "1px solid #fca5a5", borderRadius: 6, padding: "9px 12px", marginBottom: 12, fontSize: "0.82rem", color: "#b91c1c" }}>⚠ {errors.cv}</div>
               )}
               <FileUpload label="Curriculum Vitae aggiornato" required hint="PDF max 5 MB"
-                value={cvFileB} onChange={f => { setCvFileB(f); clearErr("cv"); }} />
+                uploading={cvUploadingB} result={cvAttachmentB}
+                onSelect={f => void handleFileUpload(f, 5, setCvUploadingB, setCvAttachmentB, "cv")} />
             </SectionCard>
           </>
         )}

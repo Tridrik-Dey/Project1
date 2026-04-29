@@ -1,12 +1,17 @@
 import { useEffect, useState } from "react";
 import { Navigate, useParams } from "react-router-dom";
-import { ChevronDown, ChevronUp, Download, FileText, Globe, MapPin, MessageSquare, Star, User, X } from "lucide-react";
+import { ChevronDown, ChevronUp, Download, FileText, Globe, Handshake, LayoutGrid, MapPin, MessageSquare, Star, User, X } from "lucide-react";
 import { useAuth } from "../../auth/AuthContext";
+import { API_BASE_URL } from "../../api/http";
 import {
   getMyLatestRevampApplication,
   getRevampApplicationSections,
+  getRevampApplicationCommunications,
+  getMyEvaluationAggregate,
   type RevampApplicationSummary,
   type RevampSectionSnapshot,
+  type RevampApplicationCommunication,
+  type MyEvaluationAggregate,
 } from "../../api/revampApplicationApi";
 
 const NAVY  = "#0f2a52";
@@ -121,16 +126,6 @@ function a(val: unknown): string[] {
 }
 
 /* ─── UI helpers ────────────────────────────────────── */
-function SolcoLogo() {
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-      <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 24, height: 24, background: "#f5c800", borderRadius: 4 }}>
-        <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#fff", display: "inline-block" }} />
-      </span>
-      <span style={{ fontWeight: 800, fontSize: "1rem", color: "#1a1a2e" }}>Solco<sup style={{ color: "#f5c800", fontSize: "0.5rem", verticalAlign: "super" }}>+</sup></span>
-    </div>
-  );
-}
 
 function Stars({ rating }: { rating: number }) {
   return (
@@ -159,13 +154,19 @@ function Badge({ text, color }: { text: string; color: "green" | "yellow" | "nav
   );
 }
 
-function StatCard({ label, value, sub, accent }: { label: string; value: string; sub: string; accent: string }) {
+function StatCard({ label, value, sub, tone, icon, pill }: { label: string; value: string; sub: string; tone: "tone-ok" | "tone-info" | "tone-attention" | "tone-progress" | "tone-critical"; icon: React.ReactNode; pill?: { text: string; level: "ok" | "info" | "attention" | "critical" } }) {
   return (
-    <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 10, padding: "16px 20px", flex: 1 }}>
-      <div style={{ fontSize: "0.74rem", color: MUTED, marginBottom: 6 }}>{label}</div>
-      <div style={{ fontSize: "1.6rem", fontWeight: 800, color: accent, lineHeight: 1.1, marginBottom: 4 }}>{value}</div>
-      <div style={{ fontSize: "0.74rem", color: MUTED }}>{sub}</div>
-    </div>
+    <article className={`panel superadmin-kpi-card ${tone}`} style={{ flex: 1, minWidth: 0, padding: "0.6rem 0.85rem", borderRadius: 12, gap: "0.08rem" }}>
+      <div className="superadmin-kpi-head">
+        <h4 style={{ margin: 0 }}>{label}</h4>
+        <span className="superadmin-kpi-icon">{icon}</span>
+      </div>
+      <strong>{value}</strong>
+      <div className="superadmin-kpi-foot">
+        <p style={{ margin: 0 }}>{sub}</p>
+        {pill && <span className={`superadmin-kpi-level level-${pill.level}`}>{pill.text}</span>}
+      </div>
+    </article>
   );
 }
 
@@ -206,45 +207,55 @@ function TagPill({ text }: { text: string }) {
   );
 }
 
+const SECTION_ACCENT: Record<number, string> = { 1: "blue", 2: "green", 3: "teal", 4: "orange", 5: "purple" };
+
 function SectionCard({ n, title, done, children }: {
   n: number; title: string; done: boolean; children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(true);
+  const accent = SECTION_ACCENT[n] ?? "blue";
   return (
-    <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 10, overflow: "hidden" }}>
+    <article className={`panel profile-section-card accent-${accent}`} style={{ padding: 0, overflow: "hidden" }}>
       <button
         type="button"
         onClick={() => setOpen(o => !o)}
-        style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "13px 18px", background: done ? "#fafafa" : "#fffbeb", border: "none", cursor: "pointer", textAlign: "left" as const }}
+        style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "11px 16px", background: "none", border: "none", cursor: "pointer", textAlign: "left" as const }}
       >
-        <span style={{ width: 22, height: 22, borderRadius: "50%", background: done ? "#16a34a" : "#f3f4f6", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "0.7rem", color: done ? "#fff" : "#9ca3af", fontWeight: 700, flexShrink: 0 }}>
+        <span style={{ width: 24, height: 24, borderRadius: "50%", background: done ? "#16a34a" : "#e5e7eb", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "0.72rem", color: done ? "#fff" : "#6b7280", fontWeight: 700, flexShrink: 0 }}>
           {done ? "✓" : n}
         </span>
-        <span style={{ fontWeight: 700, fontSize: "0.88rem", color: "#1e293b", flex: 1 }}>
+        <span className="profile-section-title" style={{ flex: 1 }}>
           Sezione {n} — {title}
         </span>
-        {done && <span style={{ fontSize: "0.72rem", color: "#16a34a", fontWeight: 600 }}>Completata</span>}
+        {done && <span className="superadmin-kpi-level level-ok" style={{ marginRight: 6 }}>Completata</span>}
         {open ? <ChevronUp size={14} color={MUTED} /> : <ChevronDown size={14} color={MUTED} />}
       </button>
       {open && (
-        <div style={{ padding: "8px 18px 16px", borderTop: "1px solid #f3f4f6" }}>
-          {children}
-        </div>
+        <>
+          <div style={{ height: 1, background: "#f1f5f9", margin: "0 16px" }} />
+          <div className="profile-section-body" style={{ padding: "10px 16px 16px", gap: 0 }}>
+            {children}
+          </div>
+        </>
       )}
-    </div>
+    </article>
   );
 }
 
 /* ─── main component ─────────────────────────────────── */
 export function RevampSupplierDashboardPage() {
   const { registryType: registryParam } = useParams();
-  const { auth } = useAuth();
+  const { auth, logout } = useAuth();
 
   const [loading, setLoading]         = useState(true);
   const [application, setApplication] = useState<RevampApplicationSummary | null>(null);
   const [sections, setSections]       = useState<Record<string, RevampSectionSnapshot>>({});
   const [activeTab, setActiveTab]     = useState<Tab>("profilo");
   const [showModal, setShowModal]     = useState(false);
+  const [evalAggregate, setEvalAggregate] = useState<MyEvaluationAggregate | null>(null);
+  const [communications, setCommunications] = useState<RevampApplicationCommunication[]>([]);
+  const [downloadingKey, setDownloadingKey] = useState<string | null>(null);
+  const [showUserMenu, setShowUserMenu] = useState(false);
 
   const isA    = registryParam === "albo-a";
   const isB    = registryParam === "albo-b";
@@ -259,7 +270,10 @@ export function RevampSupplierDashboardPage() {
         const expectedType = isA ? "ALBO_A" : "ALBO_B";
         if (app.registryType !== expectedType) { setLoading(false); return; }
         setApplication(app);
-        const allSecs = await getRevampApplicationSections(app.id, auth.token!);
+        const [allSecs, timeline] = await Promise.all([
+          getRevampApplicationSections(app.id, auth.token!),
+          getRevampApplicationCommunications(app.id, auth.token!).catch(() => [] as RevampApplicationCommunication[])
+        ]);
         if (cancelled) return;
         const byKey: Record<string, RevampSectionSnapshot> = {};
         allSecs.forEach(sec => {
@@ -267,7 +281,9 @@ export function RevampSupplierDashboardPage() {
             byKey[sec.sectionKey] = sec;
         });
         setSections(byKey);
+        setCommunications(timeline);
         setLoading(false);
+        getMyEvaluationAggregate(auth.token!).then(setEvalAggregate).catch(() => {});
       })
       .catch(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
@@ -367,6 +383,16 @@ export function RevampSupplierDashboardPage() {
   const modifySubject = encodeURIComponent(`Richiesta modifica profilo — ${alboLabel} — ${displayName}`);
   const modifyBody    = encodeURIComponent(`Gentile team Solco,\n\nRichiedo la modifica del mio profilo sull'Albo Fornitori.\n\nCodice candidatura: ${proto}\nNome/Ragione sociale: ${displayName}\n\nModifiche richieste:\n[descrivere qui le modifiche]`);
 
+  const communicationRows = [
+    ...communications.map(item => ({
+      date: new Date(item.occurredAt).toLocaleDateString("it-IT"),
+      text: item.eventKey === "revamp.application.submitted"
+        ? `${item.message} - Codice protocollo: ${proto}`
+        : item.message
+    })),
+    { date: new Date().toLocaleDateString("it-IT"), text: `Accesso all'area riservata - ${alboLabel}` }
+  ];
+
   const tabItems: { id: Tab; label: string }[] = [
     { id: "profilo",       label: "Il mio profilo" },
     { id: "documenti",     label: "Documenti" },
@@ -374,9 +400,62 @@ export function RevampSupplierDashboardPage() {
     { id: "comunicazioni", label: "Comunicazioni" },
   ];
 
+  /* ── print handler ── */
+  function handlePrint() { window.print(); }
+
+  /* ── download handler ── */
+  async function handleDownload(fileName: string, storageKey: string) {
+    if (!auth?.token || !application?.id) return;
+    setDownloadingKey(storageKey);
+    try {
+      const resp = await fetch(
+        `${API_BASE_URL}/api/v2/applications/${application.id}/attachments/download?storageKey=${encodeURIComponent(storageKey)}`,
+        { headers: { Authorization: `Bearer ${auth.token}` } }
+      );
+      if (!resp.ok) throw new Error("Download failed");
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = fileName;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      // silently ignore
+    } finally {
+      setDownloadingKey(null);
+    }
+  }
+
+  /* ── document list from section payloads ── */
+  type DocEntry = { label: string; subLabel: string; fileName: string; storageKey: string; mimeType: string; sizeBytes: number };
+  const docsList: DocEntry[] = [];
+
+  if (isA && s1.profilePhotoAttachment && typeof s1.profilePhotoAttachment === "object") {
+    const p = s1.profilePhotoAttachment as { fileName?: string; storageKey?: string; mimeType?: string; sizeBytes?: number };
+    if (p.fileName && p.storageKey) {
+      docsList.push({ label: "Foto profilo", subLabel: "Sezione 1", fileName: p.fileName, storageKey: p.storageKey, mimeType: p.mimeType ?? "image/*", sizeBytes: p.sizeBytes ?? 0 });
+    }
+  }
+
+  const s4Attachments = Array.isArray(s4.attachments)
+    ? (s4.attachments as Array<{ documentType?: string; fileName?: string; storageKey?: string; mimeType?: string; sizeBytes?: number }>)
+    : [];
+  for (const att of s4Attachments) {
+    if (!att.fileName || !att.storageKey) continue;
+    const typeLabel = att.documentType === "CV" ? "Curriculum Vitae" : att.documentType === "CERTIFICATION" ? "Certificazione" : att.documentType ?? "Documento";
+    docsList.push({ label: typeLabel, subLabel: "Sezione 4", fileName: att.fileName, storageKey: att.storageKey, mimeType: att.mimeType ?? "application/octet-stream", sizeBytes: att.sizeBytes ?? 0 });
+  }
+
+  function formatDocSize(bytes: number): string {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
   /* ── completed section count ── */
   const completedCount = isA
-    ? [sections.S1, sections.S2, sections.S3A ?? sections.S3, sections.S4, sections.S5].filter(sec => sec?.completed).length
+    ? [sections.S1, sections.S2, sections.S3A ?? sections.S3B ?? sections.S3, sections.S4, sections.S5].filter(sec => sec?.completed).length
     : [sections.S1, sections.S2, sections.S3, sections.S4, sections.S5].filter(sec => sec?.completed).length;
 
   if (loading) {
@@ -391,7 +470,7 @@ export function RevampSupplierDashboardPage() {
   }
 
   return (
-    <div style={{ margin: "-1rem", background: "#f8fafc", minHeight: "100%", fontFamily: "inherit" }}>
+    <div style={{ margin: 0, background: "#f8fafc", minHeight: "100vh", fontFamily: "inherit" }}>
 
       {/* ── Modifica modal ── */}
       {showModal && (
@@ -445,21 +524,77 @@ export function RevampSupplierDashboardPage() {
       )}
 
       {/* ── Top bar ── */}
-      <div style={{ background: "#fff", borderBottom: "1px solid #e5e7eb", display: "flex", alignItems: "center", padding: "0 32px", height: 56 }}>
-        <SolcoLogo />
-        <div style={{ display: "flex", gap: 0, marginLeft: 48, height: "100%" }}>
+      <div style={{ background: "linear-gradient(120deg, #0b3f73 0%, #1b5d96 52%, #0c467f 100%)", borderBottom: "1px solid rgba(206,226,248,0.24)", display: "flex", alignItems: "center", padding: "0 32px", minHeight: 64 }}>
+        {/* Brand */}
+        <div style={{ display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
+          <div style={{ width: 36, height: 36, background: "#f5c800", borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <div style={{ width: 10, height: 10, borderRadius: "50%", background: "#fff" }} />
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.2 }}>
+            <span style={{ fontWeight: 900, fontSize: "1.35rem", color: "#fff", letterSpacing: "-0.02em", fontFamily: "'Outfit', sans-serif" }}>
+              Solco<sup style={{ fontSize: "0.45em", color: "#f5c800", verticalAlign: "super" }}>+</sup>
+            </span>
+            <span style={{ fontWeight: 500, fontSize: "0.66rem", color: "rgba(255,255,255,0.7)", letterSpacing: "0.1em", textTransform: "uppercase" as const }}>
+              Albo Fornitori Digitale
+            </span>
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 0, marginLeft: 40, height: 64 }}>
           {tabItems.map(t => (
             <button key={t.id} type="button" onClick={() => setActiveTab(t.id)}
-              style={{ padding: "0 20px", height: "100%", background: "none", border: "none", borderBottom: activeTab === t.id ? `2.5px solid ${accent}` : "2.5px solid transparent", fontWeight: activeTab === t.id ? 700 : 500, fontSize: "0.87rem", color: activeTab === t.id ? accent : MUTED, cursor: "pointer" }}>
+              style={{ padding: "0 20px", height: "100%", background: "none", border: "none", borderBottom: activeTab === t.id ? "2.5px solid #f5c800" : "2.5px solid transparent", fontWeight: activeTab === t.id ? 700 : 500, fontSize: "0.87rem", color: activeTab === t.id ? "#fff" : "rgba(255,255,255,0.65)", cursor: "pointer" }}>
               {t.label}
             </button>
           ))}
         </div>
-        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
-          <div style={{ width: 32, height: 32, borderRadius: "50%", background: accent, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: "0.78rem", color: "#fff" }}>
-            {initials}
-          </div>
-          <span style={{ fontSize: "0.83rem", fontWeight: 600, color: "#1e293b" }}>{displayName}</span>
+        <div style={{ marginLeft: "auto", position: "relative" }}>
+          <button
+            type="button"
+            onClick={() => setShowUserMenu(o => !o)}
+            style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 8px 4px 4px", background: showUserMenu ? "rgba(255,255,255,0.15)" : "none", border: "1.5px solid transparent", borderRadius: 8, cursor: "pointer", transition: "background .15s" }}
+          >
+            <div style={{ width: 32, height: 32, borderRadius: "50%", background: accent, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: "0.78rem", color: "#fff", flexShrink: 0 }}>
+              {initials}
+            </div>
+            <span style={{ fontSize: "0.83rem", fontWeight: 600, color: "#fff" }}>{displayName}</span>
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" style={{ color: "rgba(255,255,255,0.7)", transition: "transform .2s", transform: showUserMenu ? "rotate(180deg)" : "rotate(0deg)" }}>
+              <path d="M2 4l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+
+          {showUserMenu && (
+            <>
+              {/* backdrop to close on outside click */}
+              <div style={{ position: "fixed", inset: 0, zIndex: 49 }} onClick={() => setShowUserMenu(false)} />
+              <div style={{ position: "absolute", top: "calc(100% + 6px)", right: 0, background: "#fff", border: "1px solid #e5e7eb", borderRadius: 10, boxShadow: "0 6px 20px rgba(0,0,0,0.09)", width: "max-content", minWidth: 0, zIndex: 50, overflow: "hidden" }}>
+                {/* user info */}
+                <div style={{ padding: "11px 14px 10px", borderBottom: "1px solid #f1f5f9" }}>
+                  <div style={{ fontWeight: 700, fontSize: "0.87rem", color: "#1e293b", whiteSpace: "nowrap" }}>{displayName}</div>
+                  {auth?.email && <div style={{ fontSize: "0.75rem", color: MUTED, marginTop: 1, whiteSpace: "nowrap" }}>{auth.email}</div>}
+                  <div style={{ marginTop: 5 }}>
+                    <span style={{ fontSize: "0.69rem", fontWeight: 600, padding: "2px 7px", background: isA ? "#eff6ff" : "#f0fdf4", color: isA ? "#1d4ed8" : "#15803d", borderRadius: 10, whiteSpace: "nowrap" }}>
+                      {alboLabel}
+                    </span>
+                  </div>
+                </div>
+                {/* logout */}
+                <button
+                  type="button"
+                  onClick={() => { setShowUserMenu(false); logout(); }}
+                  style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "9px 14px", background: "none", border: "none", cursor: "pointer", fontSize: "0.83rem", fontWeight: 600, color: "#dc2626", textAlign: "left" as const, whiteSpace: "nowrap" }}
+                  onMouseEnter={e => (e.currentTarget.style.background = "#fef2f2")}
+                  onMouseLeave={e => (e.currentTarget.style.background = "none")}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                    <polyline points="16 17 21 12 16 7" />
+                    <line x1="21" y1="12" x2="9" y2="12" />
+                  </svg>
+                  Esci
+                </button>
+              </div>
+            </>
+          )}
         </div>
       </div>
 
@@ -495,11 +630,48 @@ export function RevampSupplierDashboardPage() {
         <div style={{ maxWidth: 1100, margin: "0 auto", padding: "20px 24px" }}>
 
           {/* Stats */}
-          <div style={{ display: "flex", gap: 16, marginBottom: 20 }}>
-            <StatCard label="Punteggio medio"   value="—"               sub="nessuna valutazione ancora"  accent="#f59e0b" />
-            <StatCard label="Collaborazioni"     value="0"               sub="da avviare"                  accent={accent} />
-            <StatCard label="Stato candidatura"  value={statusCfg.label} sub={submittedAt ? `Inviata ${submittedAt}` : "—"} accent={accent} />
-            <StatCard label="Sezioni completate" value={`${completedCount}/5`} sub="sezioni del wizard"   accent="#6366f1" />
+          <div style={{ display: "flex", gap: 14, marginBottom: 20 }}>
+            <StatCard
+              label="Punteggio medio"
+              value={evalAggregate && evalAggregate.activeEvaluations > 0 ? evalAggregate.averageOverallScore.toFixed(1) : "—"}
+              sub={evalAggregate && evalAggregate.activeEvaluations > 0 ? `su ${evalAggregate.activeEvaluations} valutazion${evalAggregate.activeEvaluations === 1 ? "e" : "i"}` : "nessuna valutazione ancora"}
+              tone="tone-attention"
+              icon={<Star size={14} />}
+              pill={evalAggregate && evalAggregate.activeEvaluations > 0 ? {
+                text: evalAggregate.averageOverallScore >= 4.5 ? "Eccellente" : evalAggregate.averageOverallScore >= 3.5 ? "Buono" : evalAggregate.averageOverallScore >= 2.5 ? "Nella media" : "Da migliorare",
+                level: evalAggregate.averageOverallScore >= 4.5 ? "ok" : evalAggregate.averageOverallScore >= 3.5 ? "info" : "attention"
+              } : undefined}
+            />
+            <StatCard
+              label="Collaborazioni"
+              value={evalAggregate ? String(evalAggregate.activeEvaluations) : "0"}
+              sub={evalAggregate && evalAggregate.activeEvaluations > 0 ? "valutazioni ricevute" : "da avviare"}
+              tone="tone-info"
+              icon={<Handshake size={14} />}
+              pill={evalAggregate && evalAggregate.activeEvaluations > 0 ? { text: "Attivo", level: "ok" } : { text: "Nessuna", level: "info" }}
+            />
+            <StatCard
+              label="Stato candidatura"
+              value={statusCfg.label}
+              sub={submittedAt ? `Inviata ${submittedAt}` : "—"}
+              tone={status === "APPROVED" ? "tone-ok" : status === "REJECTED" ? "tone-critical" : status === "DRAFT" ? "tone-attention" : "tone-info"}
+              icon={<FileText size={14} />}
+              pill={{
+                text: status === "APPROVED" ? "Attivo" : status === "REJECTED" ? "Respinta" : status === "DRAFT" ? "Bozza" : "In revisione",
+                level: status === "APPROVED" ? "ok" : status === "REJECTED" ? "critical" : status === "DRAFT" ? "attention" : "info"
+              }}
+            />
+            <StatCard
+              label="Sezioni completate"
+              value={`${completedCount}/5`}
+              sub="sezioni del wizard"
+              tone="tone-progress"
+              icon={<LayoutGrid size={14} />}
+              pill={{
+                text: completedCount === 5 ? "Completo" : completedCount >= 3 ? "In corso" : "Da completare",
+                level: completedCount === 5 ? "ok" : completedCount >= 3 ? "attention" : "info"
+              }}
+            />
           </div>
 
           {/* Two-column layout */}
@@ -517,8 +689,12 @@ export function RevampSupplierDashboardPage() {
                 </div>
                 {isA && (
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginTop: 8 }}>
-                    <Stars rating={0} />
-                    <span style={{ fontSize: "0.78rem", color: MUTED }}>nessuna valutazione</span>
+                    <Stars rating={evalAggregate?.averageOverallScore ?? 0} />
+                    <span style={{ fontSize: "0.78rem", color: MUTED }}>
+                      {evalAggregate && evalAggregate.activeEvaluations > 0
+                        ? `${evalAggregate.averageOverallScore.toFixed(1)} / 5`
+                        : "nessuna valutazione"}
+                    </span>
                   </div>
                 )}
                 <div style={{ marginTop: 10 }}>
@@ -560,9 +736,8 @@ export function RevampSupplierDashboardPage() {
                   style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 5, padding: "8px 0", background: "#fff", border: `1.5px solid ${accent}`, borderRadius: 6, fontSize: "0.78rem", fontWeight: 600, color: accent, cursor: "pointer" }}>
                   <MessageSquare size={12} /> {isDraft ? "Continua" : "Modifica"}
                 </button>
-                <button type="button"
-                  style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 5, padding: "8px 0", background: "#fff", border: "1.5px solid #d1d5db", borderRadius: 6, fontSize: "0.78rem", fontWeight: 600, color: "#374151", cursor: "pointer" }}
-                  title="Funzionalità in arrivo">
+                <button type="button" onClick={handlePrint}
+                  style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 5, padding: "8px 0", background: "#fff", border: "1.5px solid #d1d5db", borderRadius: 6, fontSize: "0.78rem", fontWeight: 600, color: "#374151", cursor: "pointer" }}>
                   <Download size={12} /> Scarica PDF
                 </button>
               </div>
@@ -910,22 +1085,103 @@ export function RevampSupplierDashboardPage() {
       {/* ── Tab: Documenti ── */}
       {activeTab === "documenti" && (
         <div style={{ maxWidth: 1080, margin: "40px auto", padding: "0 24px" }}>
-          <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 10, padding: "40px 32px", textAlign: "center" }}>
-            <FileText size={40} color="#d1d5db" style={{ margin: "0 auto 16px", display: "block" }} />
-            <div style={{ fontWeight: 700, fontSize: "1rem", color: "#6b7280", marginBottom: 8 }}>Gestione documenti</div>
-            <div style={{ fontSize: "0.84rem", color: MUTED }}>La gestione documenti sarà disponibile a breve.</div>
-          </div>
+          <div style={{ fontWeight: 700, fontSize: "1rem", color: "#1e293b", marginBottom: 16 }}>Documenti caricati</div>
+          {docsList.length === 0 ? (
+            <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 10, padding: "40px 32px", textAlign: "center" }}>
+              <FileText size={40} color="#d1d5db" style={{ margin: "0 auto 16px", display: "block" }} />
+              <div style={{ fontWeight: 700, fontSize: "1rem", color: "#6b7280", marginBottom: 8 }}>Nessun documento caricato</div>
+              <div style={{ fontSize: "0.84rem", color: MUTED }}>I documenti allegati durante la compilazione appariranno qui.</div>
+            </div>
+          ) : (
+            <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 10, overflow: "hidden" }}>
+              {docsList.map((doc, i) => (
+                <div key={doc.storageKey} style={{ display: "flex", alignItems: "center", gap: 14, padding: "14px 20px", borderBottom: i < docsList.length - 1 ? "1px solid #f1f5f9" : "none" }}>
+                  <div style={{ width: 38, height: 38, borderRadius: 8, background: "#f3f4f6", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    <FileText size={18} color="#6b7280" />
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, fontSize: "0.88rem", color: "#1e293b" }}>{doc.label}</div>
+                    <div style={{ fontSize: "0.76rem", color: MUTED, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {doc.fileName} · {formatDocSize(doc.sizeBytes)} · {doc.subLabel}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleDownload(doc.fileName, doc.storageKey)}
+                    disabled={downloadingKey === doc.storageKey || !application?.id}
+                    style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 14px", background: "#fff", border: "1.5px solid #d1d5db", borderRadius: 6, fontSize: "0.78rem", fontWeight: 600, color: "#374151", cursor: application?.id ? "pointer" : "not-allowed", opacity: downloadingKey === doc.storageKey ? 0.6 : 1, flexShrink: 0 }}
+                  >
+                    <Download size={13} />
+                    {downloadingKey === doc.storageKey ? "..." : "Scarica"}
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
       {/* ── Tab: Valutazioni ── */}
       {activeTab === "valutazioni" && (
         <div style={{ maxWidth: 1080, margin: "40px auto", padding: "0 24px" }}>
-          <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 10, padding: "40px 32px", textAlign: "center" }}>
-            <Star size={40} color="#d1d5db" style={{ margin: "0 auto 16px", display: "block" }} />
-            <div style={{ fontWeight: 700, fontSize: "1rem", color: "#6b7280", marginBottom: 8 }}>Nessuna valutazione ancora</div>
-            <div style={{ fontSize: "0.84rem", color: MUTED }}>Le valutazioni appariranno qui dopo le prime collaborazioni con il Gruppo Solco.</div>
-          </div>
+          {evalAggregate && evalAggregate.activeEvaluations > 0 ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              {/* Score summary card */}
+              <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 10, padding: "28px 32px", display: "flex", alignItems: "center", gap: 40 }}>
+                <div style={{ textAlign: "center", minWidth: 120 }}>
+                  <div style={{ fontSize: "3rem", fontWeight: 900, color: "#f59e0b", lineHeight: 1 }}>
+                    {evalAggregate.averageOverallScore.toFixed(1)}
+                  </div>
+                  <div style={{ marginTop: 8 }}>
+                    <Stars rating={evalAggregate.averageOverallScore} />
+                  </div>
+                  <div style={{ fontSize: "0.78rem", color: MUTED, marginTop: 6 }}>punteggio medio</div>
+                </div>
+                <div style={{ width: 1, height: 80, background: "#e5e7eb", flexShrink: 0 }} />
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                    <span style={{ fontSize: "1.6rem", fontWeight: 800, color: "#1e293b" }}>{evalAggregate.activeEvaluations}</span>
+                    <span style={{ fontSize: "0.84rem", color: MUTED }}>valutazion{evalAggregate.activeEvaluations === 1 ? "e" : "i"} ricevut{evalAggregate.activeEvaluations === 1 ? "a" : "e"}</span>
+                  </div>
+                  {evalAggregate.totalEvaluations > evalAggregate.activeEvaluations && (
+                    <div style={{ fontSize: "0.78rem", color: MUTED }}>
+                      {evalAggregate.totalEvaluations - evalAggregate.activeEvaluations} annullat{evalAggregate.totalEvaluations - evalAggregate.activeEvaluations === 1 ? "a" : "e"}
+                    </div>
+                  )}
+                  <div style={{ fontSize: "0.82rem", color: MUTED, marginTop: 4 }}>
+                    Le valutazioni sono assegnate dai responsabili del Gruppo Solco dopo ogni collaborazione.
+                  </div>
+                </div>
+              </div>
+
+              {/* Score bar visual */}
+              <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 10, padding: "20px 32px" }}>
+                <div style={{ fontWeight: 700, fontSize: "0.88rem", color: "#374151", marginBottom: 14 }}>Distribuzione punteggio</div>
+                {[5, 4, 3, 2, 1].map(star => {
+                  const distribution = evalAggregate.scoreDistribution ?? {};
+                  const maxCount = Math.max(1, ...[1, 2, 3, 4, 5].map(score => distribution[String(score)] ?? 0));
+                  const count = distribution[String(star)] ?? 0;
+                  const pct = Math.round((count / maxCount) * 100);
+                  return (
+                    <div key={star} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                      <span style={{ fontSize: "0.78rem", color: MUTED, minWidth: 16, textAlign: "right" }}>{star}</span>
+                      <Star size={11} fill="#f59e0b" color="#f59e0b" />
+                      <div style={{ flex: 1, height: 8, background: "#f3f4f6", borderRadius: 4, overflow: "hidden" }}>
+                        <div style={{ width: `${pct}%`, height: "100%", background: "#f59e0b", borderRadius: 4, transition: "width .4s" }} />
+                      </div>
+                      <span style={{ fontSize: "0.76rem", color: MUTED, minWidth: 22, textAlign: "right" }}>{count}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : (
+            <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 10, padding: "40px 32px", textAlign: "center" }}>
+              <Star size={40} color="#d1d5db" style={{ margin: "0 auto 16px", display: "block" }} />
+              <div style={{ fontWeight: 700, fontSize: "1rem", color: "#6b7280", marginBottom: 8 }}>Nessuna valutazione ancora</div>
+              <div style={{ fontSize: "0.84rem", color: MUTED }}>Le valutazioni appariranno qui dopo le prime collaborazioni con il Gruppo Solco.</div>
+            </div>
+          )}
         </div>
       )}
 
@@ -934,18 +1190,180 @@ export function RevampSupplierDashboardPage() {
         <div style={{ maxWidth: 1080, margin: "40px auto", padding: "0 24px" }}>
           <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 10, padding: "20px 24px" }}>
             <div style={{ fontWeight: 700, fontSize: "0.95rem", color: "#1e293b", marginBottom: 14 }}>Tutte le comunicazioni</div>
-            {[
-              submittedAt ? { date: submittedAt, text: `Candidatura ricevuta — Codice protocollo: ${proto}` } : null,
-              { date: new Date().toLocaleDateString("it-IT"), text: `Accesso all'area riservata — ${alboLabel}` },
-            ].filter(Boolean).map((msg, i) => (
+            {communicationRows.map((msg, i) => (
               <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "12px 0", borderBottom: "1px solid #f1f5f9" }}>
-                <span style={{ fontSize: "0.73rem", color: MUTED, minWidth: 80, flexShrink: 0, marginTop: 2 }}>{msg!.date}</span>
-                <span style={{ fontSize: "0.84rem", color: "#1e293b" }}>{msg!.text}</span>
+                <span style={{ fontSize: "0.73rem", color: MUTED, minWidth: 80, flexShrink: 0, marginTop: 2 }}>{msg.date}</span>
+                <span style={{ fontSize: "0.84rem", color: "#1e293b" }}>{msg.text}</span>
               </div>
             ))}
           </div>
         </div>
       )}
+
+      {/* ═══════════════════════════════════════════════════
+          PRINT-ONLY AREA — hidden on screen, visible on print
+      ═══════════════════════════════════════════════════ */}
+      <style>{`
+        @media screen { .revamp-pdf { display: none !important; } }
+        @media print {
+          body * { visibility: hidden; }
+          .revamp-pdf, .revamp-pdf * { visibility: visible; }
+          .revamp-pdf { position: absolute; top: 0; left: 0; width: 100%; padding: 40px 48px; box-sizing: border-box; font-family: Arial, sans-serif; }
+          .revamp-pdf-row { display: flex; gap: 24px; margin-bottom: 6px; }
+          .revamp-pdf-label { font-size: 10px; font-weight: 700; text-transform: uppercase; color: #6b7280; min-width: 160px; }
+          .revamp-pdf-value { font-size: 11px; color: #111827; }
+          .revamp-pdf-section { margin-top: 18px; border-top: 1px solid #e5e7eb; padding-top: 12px; }
+          .revamp-pdf-section-title { font-size: 11px; font-weight: 700; color: #374151; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 8px; }
+          .revamp-pdf-tag { display: inline-block; padding: 2px 7px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 9px; margin: 2px 3px 2px 0; color: #374151; }
+        }
+      `}</style>
+
+      <div className="revamp-pdf">
+        {/* Header */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24, borderBottom: "2px solid #0f2a52", paddingBottom: 16 }}>
+          <div>
+            <div style={{ fontSize: 22, fontWeight: 900, color: "#0f2a52", letterSpacing: "-0.5px" }}>Solco<sup style={{ fontSize: 10, color: "#f5c800" }}>+</sup></div>
+            <div style={{ fontSize: 11, color: "#6b7280", marginTop: 2 }}>Albo Fornitori Digitale — {alboLabel}</div>
+          </div>
+          <div style={{ textAlign: "right" }}>
+            <div style={{ fontSize: 10, color: "#6b7280" }}>Codice candidatura</div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: "#1e293b" }}>{proto}</div>
+            <div style={{ fontSize: 10, color: "#6b7280", marginTop: 4 }}>Stampato il {new Date().toLocaleDateString("it-IT")}</div>
+          </div>
+        </div>
+
+        {/* Status banner */}
+        <div style={{ background: statusCfg.bg, border: `1.5px solid ${statusCfg.border}`, borderRadius: 8, padding: "10px 16px", marginBottom: 20, display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ fontSize: 18 }}>{statusCfg.icon}</span>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 800, color: statusCfg.color }}>{statusCfg.label}</div>
+            <div style={{ fontSize: 10, color: statusCfg.color, marginTop: 2 }}>{statusCfg.sub}</div>
+          </div>
+        </div>
+
+        {/* Identity */}
+        <div style={{ marginBottom: 4 }}>
+          <div style={{ fontSize: 20, fontWeight: 800, color: "#1e293b" }}>{displayName}</div>
+          <div style={{ fontSize: 12, color: "#6b7280", marginTop: 2 }}>{roleOrType}{location ? ` — ${location}` : ""}</div>
+        </div>
+
+        {isA ? (
+          <>
+            {/* S1 — Dati personali */}
+            <div className="revamp-pdf-section">
+              <div className="revamp-pdf-section-title">Sezione 1 — Dati Anagrafici</div>
+              <div className="revamp-pdf-row"><span className="revamp-pdf-label">Data di nascita</span><span className="revamp-pdf-value">{g1("birthDate") || "—"}</span></div>
+              <div className="revamp-pdf-row"><span className="revamp-pdf-label">Codice fiscale</span><span className="revamp-pdf-value">{g1("taxCode") || "—"}</span></div>
+              <div className="revamp-pdf-row"><span className="revamp-pdf-label">Partita IVA</span><span className="revamp-pdf-value">{g1("vatNumber") || "—"}</span></div>
+              <div className="revamp-pdf-row"><span className="revamp-pdf-label">Regime fiscale</span><span className="revamp-pdf-value">{TAX_REGIME_LABELS[g1("taxRegime")] || g1("taxRegime") || "—"}</span></div>
+              <div className="revamp-pdf-row"><span className="revamp-pdf-label">E-mail</span><span className="revamp-pdf-value">{g1("email") || "—"}</span></div>
+              <div className="revamp-pdf-row"><span className="revamp-pdf-label">Telefono</span><span className="revamp-pdf-value">{g1("phone") || "—"}</span></div>
+              <div className="revamp-pdf-row"><span className="revamp-pdf-label">Indirizzo</span><span className="revamp-pdf-value">{[g1("address"), g1("city"), g1("postalCode"), g1("province")].filter(Boolean).join(", ") || "—"}</span></div>
+            </div>
+
+            {/* S2 — Tipologia */}
+            <div className="revamp-pdf-section">
+              <div className="revamp-pdf-section-title">Sezione 2 — Tipologia Professionale</div>
+              <div className="revamp-pdf-row"><span className="revamp-pdf-label">Tipologia</span><span className="revamp-pdf-value">{TIPOLOGIA_LABELS[g2("tipologia")] || g2("tipologia") || "—"}</span></div>
+              {g2("atecoCode") && <div className="revamp-pdf-row"><span className="revamp-pdf-label">Codice ATECO</span><span className="revamp-pdf-value">{g2("atecoCode")}</span></div>}
+            </div>
+
+            {/* S3 — Competenze */}
+            <div className="revamp-pdf-section">
+              <div className="revamp-pdf-section-title">Sezione 3 — Competenze</div>
+              {isDocente ? (
+                <>
+                  <div className="revamp-pdf-row"><span className="revamp-pdf-label">Anni di docenza</span><span className="revamp-pdf-value">{g3("yearsExperience") || "—"}</span></div>
+                  <div className="revamp-pdf-row"><span className="revamp-pdf-label">Titolo di studio</span><span className="revamp-pdf-value">{g3("highestTitle") || g3("titoloStudio") || "—"}</span></div>
+                  {tagsA.length > 0 && (
+                    <div className="revamp-pdf-row">
+                      <span className="revamp-pdf-label">Aree tematiche</span>
+                      <span className="revamp-pdf-value">{tagsA.map(t => <span key={t} className="revamp-pdf-tag">{t}</span>)}</span>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <>
+                  <div className="revamp-pdf-row"><span className="revamp-pdf-label">Titolo di studio</span><span className="revamp-pdf-value">{g3("highestTitle") || g3("titoloB") || "—"}</span></div>
+                  <div className="revamp-pdf-row"><span className="revamp-pdf-label">Anni di esperienza</span><span className="revamp-pdf-value">{g3("experienceBand") || g3("anniEsp") || "—"}</span></div>
+                  <div className="revamp-pdf-row"><span className="revamp-pdf-label">Ambito di studio</span><span className="revamp-pdf-value">{g3("studyArea") || g3("ambitoB") || "—"}</span></div>
+                </>
+              )}
+            </div>
+
+            {/* S4 — Disponibilità */}
+            <div className="revamp-pdf-section">
+              <div className="revamp-pdf-section-title">Sezione 4 — Disponibilità e Allegati</div>
+              {isDocente ? (
+                <>
+                  <div className="revamp-pdf-row"><span className="revamp-pdf-label">Disponibilità trasferte</span><span className="revamp-pdf-value">{DISPONIBILITA_LABELS[g4("disponibilita")] || g4("disponibilita") || "—"}</span></div>
+                  {espCount > 0 && <div className="revamp-pdf-row"><span className="revamp-pdf-label">Esperienze dichiarate</span><span className="revamp-pdf-value">{espCount}</span></div>}
+                </>
+              ) : (
+                <div className="revamp-pdf-row"><span className="revamp-pdf-label">Area territoriale</span><span className="revamp-pdf-value">{g4("areaTerrB") || "—"}</span></div>
+              )}
+              {g4("cvName") && <div className="revamp-pdf-row"><span className="revamp-pdf-label">CV allegato</span><span className="revamp-pdf-value">{g4("cvName")}</span></div>}
+            </div>
+
+            {/* S5 — Dichiarazioni */}
+            <div className="revamp-pdf-section">
+              <div className="revamp-pdf-section-title">Sezione 5 — Dichiarazioni e Consensi</div>
+              <div className="revamp-pdf-row"><span className="revamp-pdf-label">Completata</span><span className="revamp-pdf-value">{sections.S5?.completed ? "Sì" : "No"}</span></div>
+              {submittedAt && <div className="revamp-pdf-row"><span className="revamp-pdf-label">Data invio candidatura</span><span className="revamp-pdf-value">{submittedAt}</span></div>}
+            </div>
+          </>
+        ) : (
+          <>
+            {/* Albo B — S1 */}
+            <div className="revamp-pdf-section">
+              <div className="revamp-pdf-section-title">Sezione 1 — Dati Aziendali</div>
+              <div className="revamp-pdf-row"><span className="revamp-pdf-label">Forma giuridica</span><span className="revamp-pdf-value">{formaGiuridica || "—"}</span></div>
+              <div className="revamp-pdf-row"><span className="revamp-pdf-label">Partita IVA</span><span className="revamp-pdf-value">{gb1("partitaIva") || gb1("vatNumber") || "—"}</span></div>
+              <div className="revamp-pdf-row"><span className="revamp-pdf-label">E-mail istituzionale</span><span className="revamp-pdf-value">{gb1("emailIstituzionale") || gb1("institutionalEmail") || "—"}</span></div>
+              <div className="revamp-pdf-row"><span className="revamp-pdf-label">Telefono</span><span className="revamp-pdf-value">{gb1("telefono") || gb1("phone") || "—"}</span></div>
+            </div>
+
+            {/* Albo B — S2 */}
+            <div className="revamp-pdf-section">
+              <div className="revamp-pdf-section-title">Sezione 2 — Struttura e Dimensione</div>
+              <div className="revamp-pdf-row"><span className="revamp-pdf-label">Dipendenti</span><span className="revamp-pdf-value">{DIPENDENTI_LABELS[gb2("dipendenti")] || gb2("employeeRange") || "—"}</span></div>
+              <div className="revamp-pdf-row"><span className="revamp-pdf-label">Fatturato</span><span className="revamp-pdf-value">{FATTURATO_LABELS[gb2("fatturato")] || gb2("revenueBand") || "—"}</span></div>
+            </div>
+
+            {/* Albo B — S3 categories */}
+            {bCatTags.length > 0 && (
+              <div className="revamp-pdf-section">
+                <div className="revamp-pdf-section-title">Sezione 3 — Servizi Offerti</div>
+                <div className="revamp-pdf-row">
+                  <span className="revamp-pdf-label">Categorie</span>
+                  <span className="revamp-pdf-value">{bCatTags.map(t => <span key={t} className="revamp-pdf-tag">{t}</span>)}</span>
+                </div>
+              </div>
+            )}
+
+            {/* Albo B — S5 */}
+            <div className="revamp-pdf-section">
+              <div className="revamp-pdf-section-title">Sezione 5 — Dichiarazioni e Compliance</div>
+              <div className="revamp-pdf-row"><span className="revamp-pdf-label">Completata</span><span className="revamp-pdf-value">{sections.S5?.completed ? "Sì" : "No"}</span></div>
+              {submittedAt && <div className="revamp-pdf-row"><span className="revamp-pdf-label">Data invio candidatura</span><span className="revamp-pdf-value">{submittedAt}</span></div>}
+            </div>
+          </>
+        )}
+
+        {/* Footer */}
+        <div style={{ marginTop: 32, borderTop: "1px solid #e5e7eb", paddingTop: 12, fontSize: 9, color: "#9ca3af", display: "flex", justifyContent: "space-between" }}>
+          <span>Solco+ — Albo Fornitori Digitale</span>
+          <span>Documento generato il {new Date().toLocaleDateString("it-IT")} — {new Date().toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" })}</span>
+        </div>
+      </div>
+
+      {/* ── Footer ── */}
+      <footer className="app-footer">
+        <div className="app-footer-left">© {new Date().getFullYear()} Albo Fornitori Digitale. Tutti i diritti riservati.</div>
+        <div className="app-footer-right">
+          <a href="/privacy" style={{ color: "#2d5478", textDecoration: "none" }}>Privacy Policy</a>
+        </div>
+      </footer>
     </div>
   );
 }

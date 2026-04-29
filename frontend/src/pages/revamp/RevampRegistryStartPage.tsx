@@ -2,7 +2,9 @@ import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "re
 import { Navigate, useNavigate, useParams, Link } from "react-router-dom";
 import { ArrowLeft, ArrowRight, Info, Save } from "lucide-react";
 import { useAuth } from "../../auth/AuthContext";
-import { createRevampApplicationDraft, getMyLatestRevampApplication, getRevampApplicationSections, saveRevampApplicationSection } from "../../api/revampApplicationApi";
+import { createRevampApplicationDraft, getMyLatestRevampApplication, getRevampApplicationSections, saveRevampApplicationSection, uploadRevampAttachment } from "../../api/revampApplicationApi";
+import type { AttachmentUploadResult } from "../../api/revampApplicationApi";
+import { API_BASE_URL } from "../../api/http";
 
 type RegistryType = "ALBO_A" | "ALBO_B";
 
@@ -301,15 +303,16 @@ export function RevampRegistryStartPage() {
     taxCode: "", vatNumber: "", taxRegime: "", taxRegimeOther: "",
     address: "", city: "", postalCode: "", province: "",
     phone: "", phoneSecondary: "",
-    email: "", emailSecondary: "", pec: "",
+    email: auth?.email ?? "", emailSecondary: "", pec: "",
     website: "", linkedin: ""
   });
   const [errors, setErrors]   = useState<Record<string, string>>({});
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [profilePhotoPreviewUrl, setProfilePhotoPreviewUrl] = useState<string | null>(null);
-  const [profilePhotoAttachment, setProfilePhotoAttachment] = useState<{ fileName: string; mimeType: string; storageKey: string } | null>(null);
+  const [profilePhotoAttachment, setProfilePhotoAttachment] = useState<AttachmentUploadResult | null>(null);
   const [photoError, setPhotoError] = useState<string | null>(null);
+  const [photoUploading, setPhotoUploading] = useState(false);
   const photoInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -320,28 +323,31 @@ export function RevampRegistryStartPage() {
         .filter(s => s.sectionKey === "S1")
         .sort((a, b) => b.sectionVersion - a.sectionVersion)[0];
       if (!latest) return;
-      const s1 = JSON.parse(latest.payloadJson) as Record<string, string>;
+      const s1 = JSON.parse(latest.payloadJson) as Record<string, unknown>;
       setForm(prev => ({
         ...prev,
-        firstName:      s1.firstName      ?? prev.firstName,
-        lastName:       s1.lastName       ?? prev.lastName,
-        birthDate:      s1.birthDate      ?? prev.birthDate,
-        birthPlace:     s1.birthPlace     ?? prev.birthPlace,
-        taxCode:        s1.taxCode        ?? prev.taxCode,
-        vatNumber:      s1.vatNumber      ?? prev.vatNumber,
-        taxRegime:      s1.taxRegime      ?? prev.taxRegime,
-        address:        s1.addressLine    ?? s1.address ?? prev.address,
-        city:           s1.city           ?? prev.city,
-        postalCode:     s1.postalCode     ?? prev.postalCode,
-        province:       s1.province       ?? prev.province,
-        phone:          s1.phone          ?? prev.phone,
-        phoneSecondary: s1.secondaryPhone ?? prev.phoneSecondary,
-        email:          s1.email          ?? prev.email,
-        emailSecondary: s1.secondaryEmail ?? prev.emailSecondary,
-        pec:            s1.pec            ?? prev.pec,
-        website:        s1.website        ?? prev.website,
-        linkedin:       s1.linkedin       ?? prev.linkedin,
+        firstName:      (s1.firstName      as string) ?? prev.firstName,
+        lastName:       (s1.lastName       as string) ?? prev.lastName,
+        birthDate:      (s1.birthDate      as string) ?? prev.birthDate,
+        birthPlace:     (s1.birthPlace     as string) ?? prev.birthPlace,
+        taxCode:        (s1.taxCode        as string) ?? prev.taxCode,
+        vatNumber:      (s1.vatNumber      as string) ?? prev.vatNumber,
+        taxRegime:      (s1.taxRegime      as string) ?? prev.taxRegime,
+        address:        ((s1.addressLine ?? s1.address) as string) ?? prev.address,
+        city:           (s1.city           as string) ?? prev.city,
+        postalCode:     (s1.postalCode     as string) ?? prev.postalCode,
+        province:       (s1.province       as string) ?? prev.province,
+        phone:          (s1.phone          as string) ?? prev.phone,
+        phoneSecondary: (s1.secondaryPhone as string) ?? prev.phoneSecondary,
+        email:          (s1.email          as string) ?? prev.email,
+        emailSecondary: (s1.secondaryEmail as string) ?? prev.emailSecondary,
+        pec:            (s1.pec            as string) ?? prev.pec,
+        website:        (s1.website        as string) ?? prev.website,
+        linkedin:       (s1.linkedin       as string) ?? prev.linkedin,
       }));
+      if (s1.profilePhotoAttachment && typeof s1.profilePhotoAttachment === "object") {
+        setProfilePhotoAttachment(s1.profilePhotoAttachment as AttachmentUploadResult);
+      }
     }
 
     const existingAppId = sessionStorage.getItem("revamp_applicationId");
@@ -362,7 +368,22 @@ export function RevampRegistryStartPage() {
     return () => { if (profilePhotoPreviewUrl) URL.revokeObjectURL(profilePhotoPreviewUrl); };
   }, [profilePhotoPreviewUrl]);
 
-  function onProfilePhotoChange(e: ChangeEvent<HTMLInputElement>) {
+  useEffect(() => {
+    if (!profilePhotoAttachment || profilePhotoPreviewUrl || !auth?.token) return;
+    const appId = sessionStorage.getItem("revamp_applicationId");
+    if (!appId) return;
+    let cancelled = false;
+    fetch(
+      `${API_BASE_URL}/api/v2/applications/${appId}/attachments/download?storageKey=${encodeURIComponent(profilePhotoAttachment.storageKey)}`,
+      { headers: { Authorization: `Bearer ${auth.token}` } }
+    )
+      .then(r => r.blob())
+      .then(blob => { if (!cancelled) setProfilePhotoPreviewUrl(URL.createObjectURL(blob)); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [profilePhotoAttachment?.storageKey]);
+
+  async function onProfilePhotoChange(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
     if (!PHOTO_MIME_TYPES.has(file.type)) {
@@ -373,9 +394,31 @@ export function RevampRegistryStartPage() {
       setPhotoError("Dimensione massima 2 MB.");
       return;
     }
-    setProfilePhotoPreviewUrl(prev => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(file); });
-    setProfilePhotoAttachment({ fileName: file.name, mimeType: file.type, storageKey: `upload://profile-photo/${Date.now()}-${file.name.replace(/\s+/g, "_")}` });
     setPhotoError(null);
+    setPhotoUploading(true);
+    setProfilePhotoPreviewUrl(prev => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(file); });
+    try {
+      let appId = sessionStorage.getItem("revamp_applicationId");
+      if (!appId && auth?.token) {
+        const draft = await createRevampApplicationDraft(
+          { registryType: registryType === "ALBO_A" ? "ALBO_A" : "ALBO_B", sourceChannel: "PUBLIC" },
+          auth.token
+        );
+        appId = draft.id;
+        sessionStorage.setItem("revamp_applicationId", appId);
+      }
+      if (!appId || !auth?.token) {
+        setPhotoError("Sessione scaduta. Effettua nuovamente il login.");
+        return;
+      }
+      const result = await uploadRevampAttachment(appId, file, auth.token);
+      setProfilePhotoAttachment(result);
+    } catch {
+      setPhotoError("Caricamento non riuscito. Riprova.");
+      setProfilePhotoPreviewUrl(prev => { if (prev) URL.revokeObjectURL(prev); return null; });
+    } finally {
+      setPhotoUploading(false);
+    }
   }
 
   function onRemoveProfilePhoto() {
@@ -617,37 +660,52 @@ export function RevampRegistryStartPage() {
               <p style={{ fontSize: "0.82rem", color: MUTED, margin: "0 0 10px" }}>
                 Opzionale. Formati supportati: JPG, PNG, WEBP. Dimensione massima: 2 MB.
               </p>
-              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                <input
-                  ref={photoInputRef}
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp"
-                  onChange={onProfilePhotoChange}
-                  style={{ fontSize: "0.85rem" }}
-                />
-                {profilePhotoAttachment ? (
-                  <button
-                    type="button"
-                    onClick={onRemoveProfilePhoto}
-                    style={{ padding: "5px 12px", background: "#fff", border: "1.5px solid #d1d5db", borderRadius: 6, fontSize: "0.82rem", cursor: "pointer", color: "#374151" }}
-                  >
-                    ✕ Rimuovi
-                  </button>
-                ) : null}
-              </div>
-              {profilePhotoPreviewUrl ? (
-                <div style={{ marginTop: 10 }}>
-                  <img
-                    src={profilePhotoPreviewUrl}
-                    alt="Anteprima foto profilo"
-                    style={{ width: 100, height: 100, objectFit: "cover", borderRadius: 8, border: "1px solid #d1d5db" }}
-                  />
-                  <p style={{ fontSize: "0.75rem", color: MUTED, margin: "4px 0 0" }}>{profilePhotoAttachment?.fileName}</p>
+              <input
+                ref={photoInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                onChange={e => void onProfilePhotoChange(e)}
+                disabled={photoUploading}
+                style={{ display: "none" }}
+              />
+              <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                {/* Clickable upload area */}
+                <div
+                  onClick={() => !photoUploading && photoInputRef.current?.click()}
+                  style={{
+                    border: `1.5px dashed ${profilePhotoAttachment ? "#16a34a" : "#d1d5db"}`,
+                    borderRadius: 8, padding: "12px 18px", cursor: photoUploading ? "default" : "pointer",
+                    background: profilePhotoAttachment ? "#f0fdf4" : "#fafafa",
+                    display: "flex", alignItems: "center", gap: 10, minWidth: 240,
+                  }}
+                >
+                  {photoUploading ? (
+                    <span style={{ fontSize: "0.82rem", color: MUTED }}>Caricamento in corso...</span>
+                  ) : profilePhotoAttachment ? (
+                    <span style={{ fontSize: "0.82rem", color: "#16a34a", fontWeight: 600 }}>✓ {profilePhotoAttachment.fileName}</span>
+                  ) : (
+                    <span style={{ fontSize: "0.82rem", color: "#9ca3af" }}>Clicca per caricare una foto</span>
+                  )}
                 </div>
-              ) : profilePhotoAttachment ? (
-                <p style={{ fontSize: "0.75rem", color: MUTED, margin: "8px 0 0" }}>Foto caricata: {profilePhotoAttachment.fileName}</p>
-              ) : null}
-              {photoError ? <span style={errTxt}>{photoError}</span> : null}
+                {/* Thumbnail or placeholder */}
+                {(profilePhotoPreviewUrl || profilePhotoAttachment) && !photoUploading && (
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+                    {profilePhotoPreviewUrl ? (
+                      <img src={profilePhotoPreviewUrl} alt="Anteprima"
+                        style={{ width: 72, height: 72, objectFit: "cover", borderRadius: 8, border: "1px solid #d1d5db" }} />
+                    ) : (
+                      <div style={{ width: 72, height: 72, borderRadius: 8, border: "1px solid #d1d5db", background: "#f3f4f6", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        <span style={{ fontSize: "1.6rem" }}>🖼</span>
+                      </div>
+                    )}
+                    <button type="button" onClick={onRemoveProfilePhoto}
+                      style={{ fontSize: "0.72rem", color: "#b91c1c", background: "none", border: "none", cursor: "pointer", padding: 0, fontWeight: 600 }}>
+                      ✕ Rimuovi
+                    </button>
+                  </div>
+                )}
+              </div>
+              {photoError ? <span style={{ ...errTxt, display: "block", marginTop: 6 }}>{photoError}</span> : null}
             </div>
 
             {/* ── Dati personali ── */}
@@ -667,16 +725,16 @@ export function RevampRegistryStartPage() {
                 value={form.taxCode} onChange={set("taxCode")} error={errors.taxCode}
                 placeholder="RSSMRA80C15F205X"
               />
+              <SelectField
+                label="Regime fiscale" required
+                value={form.taxRegime} onChange={set("taxRegime")} error={errors.taxRegime}
+                options={REGIMI_FISCALI}
+              />
               <Field
                 label="Partita IVA" required={pivaReq}
                 value={form.vatNumber} onChange={set("vatNumber")} error={errors.vatNumber}
                 placeholder="12345678901"
                 hintText={pivaReq ? "obbligatoria per questo regime" : "opzionale — 11 cifre"}
-              />
-              <SelectField
-                label="Regime fiscale" required
-                value={form.taxRegime} onChange={set("taxRegime")} error={errors.taxRegime}
-                options={REGIMI_FISCALI}
               />
             </div>
             {showOtherRegime ? (

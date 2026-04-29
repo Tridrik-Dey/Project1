@@ -31,6 +31,12 @@ export interface RevampSectionSnapshot {
   updatedAt: string;
 }
 
+export interface RevampApplicationCommunication {
+  eventKey: string;
+  message: string;
+  occurredAt: string;
+}
+
 export interface OtpChallengeDispatchResponse {
   challengeId: string;
   expiresAt: string;
@@ -50,6 +56,18 @@ export interface OtpChallengeVerifyResponse {
 }
 
 const BASE = "/api/v2/applications";
+
+export interface MyEvaluationAggregate {
+  supplierRegistryProfileId: string | null;
+  totalEvaluations: number;
+  activeEvaluations: number;
+  averageOverallScore: number;
+  scoreDistribution: Record<string, number>;
+}
+
+export function getMyEvaluationAggregate(token: string): Promise<MyEvaluationAggregate> {
+  return apiRequest<MyEvaluationAggregate>(`${BASE}/me/evaluation-aggregate`, {}, token);
+}
 
 export function createRevampApplicationDraft(
   payload: CreateRevampApplicationDraftRequest,
@@ -85,6 +103,13 @@ export function getRevampApplicationSections(
   return apiRequest<RevampSectionSnapshot[]>(`${BASE}/${applicationId}/sections`, {}, token);
 }
 
+export function getRevampApplicationCommunications(
+  applicationId: string,
+  token: string
+): Promise<RevampApplicationCommunication[]> {
+  return apiRequest<RevampApplicationCommunication[]>(`${BASE}/${applicationId}/communications`, {}, token);
+}
+
 export function saveRevampApplicationSection(
   applicationId: string,
   sectionKey: string,
@@ -101,6 +126,27 @@ export function saveRevampApplicationSection(
         completed
       })
     },
+    token
+  );
+}
+
+export interface AttachmentUploadResult {
+  storageKey: string;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+}
+
+export function uploadRevampAttachment(
+  applicationId: string,
+  file: File,
+  token: string
+): Promise<AttachmentUploadResult> {
+  const formData = new FormData();
+  formData.append("file", file);
+  return apiRequest<AttachmentUploadResult>(
+    `${BASE}/${applicationId}/attachments/upload`,
+    { method: "POST", body: formData },
     token
   );
 }

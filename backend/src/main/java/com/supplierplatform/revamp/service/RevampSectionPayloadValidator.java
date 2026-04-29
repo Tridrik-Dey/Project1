@@ -221,7 +221,6 @@ public class RevampSectionPayloadValidator {
     }
 
     private void validateAlboAS3B(ObjectNode payload) {
-        requireAnyNonBlank(payload, "professionalOrder");
         requireAnyNonBlank(payload, "highestTitle");
         requireAnyNonBlank(payload, "studyArea");
         requireAnyNonBlank(payload, "experienceBand");

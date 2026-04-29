@@ -12,7 +12,6 @@ import {
   DialogTitle
 } from "../../components/ui/dialog";
 import { useI18n } from "../../i18n/I18nContext";
-import { featureFlags } from "../../config/featureFlags";
 
 export function HomePage() {
   const { t, language } = useI18n();
@@ -29,7 +28,7 @@ export function HomePage() {
   const canSubmitSupport = useMemo(() => {
     return supportMessage.trim().length > 0;
   }, [supportMessage]);
-  const registerEntryPath = featureFlags.newWizardAb ? "/apply" : "/register";
+  const registerEntryPath = "/register";
 
   useEffect(() => {
     const onOpenSupportModal = () => setSupportOpen(true);

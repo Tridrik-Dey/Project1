@@ -186,22 +186,77 @@ public class RevampEvaluationService {
     }
 
     @Transactional(readOnly = true)
+    public RevampEvaluationAggregateDto getAggregateForSupplierUser(UUID supplierUserId) {
+        List<RevampSupplierRegistryProfile> profiles = supplierRegistryProfileRepository.findBySupplierUserId(supplierUserId);
+        if (profiles.isEmpty()) {
+            return new RevampEvaluationAggregateDto(null, 0, 0, 0.0);
+        }
+        // use the most recently created profile
+        RevampSupplierRegistryProfile profile = profiles.stream()
+                .max(Comparator.comparing(p -> p.getCreatedAt() != null ? p.getCreatedAt() : java.time.LocalDateTime.MIN))
+                .get();
+
+        List<RevampEvaluation> evals = evaluationRepository
+                .findBySupplierRegistryProfileIdOrderByCreatedAtDesc(profile.getId());
+
+        List<RevampEvaluation> activeEvaluations = evals.stream()
+                .filter(e -> !Boolean.TRUE.equals(e.getIsAnnulled()))
+                .toList();
+        long active = activeEvaluations.size();
+        double avg = activeEvaluations.stream()
+                .mapToInt(e -> e.getOverallScore() != null ? e.getOverallScore() : 0)
+                .average()
+                .orElse(0.0);
+        Map<Integer, Long> scoreDistribution = scoreDistribution(activeEvaluations);
+
+        return new RevampEvaluationAggregateDto(profile.getId(), evals.size(), active, avg, scoreDistribution);
+    }
+
+    @Transactional(readOnly = true)
     public RevampEvaluationAggregateDto summaryBySupplier(UUID supplierRegistryProfileId) {
         List<RevampEvaluationSummaryDto> rows = listBySupplier(supplierRegistryProfileId);
         long total = rows.size();
-        long active = rows.stream().filter(row -> !row.annulled()).count();
-        double average = rows.stream()
+        List<RevampEvaluationSummaryDto> activeRows = rows.stream()
                 .filter(row -> !row.annulled())
+                .toList();
+        long active = activeRows.size();
+        double average = activeRows.stream()
                 .mapToInt(RevampEvaluationSummaryDto::overallScore)
                 .average()
                 .orElse(0.0);
+        Map<Integer, Long> scoreDistribution = scoreDistributionFromSummaries(activeRows);
 
         return new RevampEvaluationAggregateDto(
                 supplierRegistryProfileId,
                 total,
                 active,
-                Math.round(average * 100.0) / 100.0
+                Math.round(average * 100.0) / 100.0,
+                scoreDistribution
         );
+    }
+
+    private Map<Integer, Long> scoreDistribution(List<RevampEvaluation> evaluations) {
+        Map<Integer, Long> distribution = new java.util.LinkedHashMap<>();
+        for (int score = 1; score <= 5; score++) {
+            final int currentScore = score;
+            long count = evaluations.stream()
+                    .filter(e -> e.getOverallScore() != null && e.getOverallScore() == currentScore)
+                    .count();
+            distribution.put(score, count);
+        }
+        return distribution;
+    }
+
+    private Map<Integer, Long> scoreDistributionFromSummaries(List<RevampEvaluationSummaryDto> evaluations) {
+        Map<Integer, Long> distribution = new java.util.LinkedHashMap<>();
+        for (int score = 1; score <= 5; score++) {
+            final int currentScore = score;
+            long count = evaluations.stream()
+                    .filter(e -> e.overallScore() == currentScore)
+                    .count();
+            distribution.put(score, count);
+        }
+        return distribution;
     }
 
     @Transactional(readOnly = true)

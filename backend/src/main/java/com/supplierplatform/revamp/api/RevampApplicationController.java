@@ -2,12 +2,17 @@ package com.supplierplatform.revamp.api;
 
 import com.supplierplatform.common.ApiResponse;
 import com.supplierplatform.config.RevampAccessGuard;
+import com.supplierplatform.revamp.api.dto.AttachmentUploadResponse;
 import com.supplierplatform.revamp.api.dto.CreateApplicationDraftRequest;
 import com.supplierplatform.revamp.api.dto.SaveApplicationSectionRequest;
 import com.supplierplatform.revamp.dto.RevampApplicationSummaryDto;
+import com.supplierplatform.revamp.dto.RevampApplicationCommunicationDto;
 import com.supplierplatform.revamp.dto.RevampSectionSnapshotDto;
+import com.supplierplatform.revamp.dto.RevampEvaluationAggregateDto;
 import com.supplierplatform.revamp.service.RevampApplicationAttachmentDownloadService;
 import com.supplierplatform.revamp.service.RevampApplicationService;
+import com.supplierplatform.revamp.service.RevampAttachmentUploadService;
+import com.supplierplatform.revamp.service.RevampEvaluationService;
 import com.supplierplatform.user.User;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -15,6 +20,7 @@ import org.springframework.core.io.Resource;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.multipart.MultipartFile;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
@@ -31,7 +37,9 @@ public class RevampApplicationController {
 
     private final RevampApplicationService applicationService;
     private final RevampApplicationAttachmentDownloadService attachmentDownloadService;
+    private final RevampAttachmentUploadService attachmentUploadService;
     private final RevampAccessGuard revampAccessGuard;
+    private final RevampEvaluationService evaluationService;
 
     @PostMapping
     public ResponseEntity<ApiResponse<RevampApplicationSummaryDto>> createDraft(
@@ -54,6 +62,13 @@ public class RevampApplicationController {
         return ResponseEntity.ok(ApiResponse.ok(applicationService.getSummary(applicationId)));
     }
 
+    @GetMapping("/me/evaluation-aggregate")
+    public ResponseEntity<ApiResponse<RevampEvaluationAggregateDto>> getMyEvaluationAggregate() {
+        revampAccessGuard.requireReadEnabled();
+        User currentUser = getCurrentUser();
+        return ResponseEntity.ok(ApiResponse.ok(evaluationService.getAggregateForSupplierUser(currentUser.getId())));
+    }
+
     @GetMapping("/me/latest")
     public ResponseEntity<ApiResponse<RevampApplicationSummaryDto>> getMyLatest() {
         revampAccessGuard.requireReadEnabled();
@@ -65,6 +80,24 @@ public class RevampApplicationController {
     public ResponseEntity<ApiResponse<List<RevampSectionSnapshotDto>>> getSections(@PathVariable UUID applicationId) {
         revampAccessGuard.requireReadEnabled();
         return ResponseEntity.ok(ApiResponse.ok(applicationService.getLatestSections(applicationId)));
+    }
+
+    @GetMapping("/{applicationId}/communications")
+    public ResponseEntity<ApiResponse<List<RevampApplicationCommunicationDto>>> getCommunications(@PathVariable UUID applicationId) {
+        revampAccessGuard.requireReadEnabled();
+        User currentUser = getCurrentUser();
+        return ResponseEntity.ok(ApiResponse.ok(applicationService.getCommunications(applicationId, currentUser.getId())));
+    }
+
+    @PostMapping("/{applicationId}/attachments/upload")
+    public ResponseEntity<ApiResponse<AttachmentUploadResponse>> uploadAttachment(
+            @PathVariable UUID applicationId,
+            @RequestParam("file") MultipartFile file
+    ) {
+        revampAccessGuard.requireWriteEnabled();
+        User currentUser = getCurrentUser();
+        AttachmentUploadResponse response = attachmentUploadService.upload(applicationId, file, currentUser.getId());
+        return ResponseEntity.ok(ApiResponse.ok("File uploaded", response));
     }
 
     @GetMapping("/{applicationId}/attachments/download")

@@ -5,6 +5,8 @@ import { useAuth } from "../../auth/AuthContext";
 import { useAdminGovernanceRole } from "../../hooks/useAdminGovernanceRole";
 import { useI18n } from "../../i18n/I18nContext";
 
+const BARE_PATHS = ["/", "/login", "/register", "/verify-otp", "/activate-account", "/accept-admin-invite", "/privacy"];
+
 function formatAdminGovernanceRole(role: string | null): string | null {
   if (!role) return null;
   if (role === "SUPER_ADMIN") return "SUPER ADMIN";
@@ -17,7 +19,7 @@ function formatAdminGovernanceRole(role: string | null): string | null {
 export function AppLayout({ children }: { children: ReactNode }) {
   const { auth, logout } = useAuth();
   const { adminRole } = useAdminGovernanceRole();
-  const { language, setLanguage, t } = useI18n();
+  const { t } = useI18n();
   const navigate = useNavigate();
   const location = useLocation();
   const [isHeaderScrolled, setIsHeaderScrolled] = useState(false);
@@ -66,8 +68,46 @@ export function AppLayout({ children }: { children: ReactNode }) {
     navigate("/?support=1");
   };
 
-  if (location.pathname.startsWith("/admin")) {
+  if (
+    location.pathname.startsWith("/admin") ||
+    location.pathname.endsWith("/my-profile") ||
+    location.pathname === "/login" ||
+    location.pathname === "/register"
+  ) {
     return <>{children}</>;
+  }
+
+  const isBarePage = BARE_PATHS.includes(location.pathname) || location.pathname.startsWith("/invite/");
+
+  if (isBarePage) {
+    return (
+      <div className="app-shell">
+        <header className={`topbar ${isHeaderScrolled ? "is-scrolled" : ""}`} style={{ padding: "0 1.5rem", minHeight: 64 }}>
+          {/* Brand */}
+          <Link to="/" style={{ textDecoration: "none", display: "flex", alignItems: "center", gap: 12 }}>
+            <div style={{ width: 36, height: 36, background: "#f5c800", borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <div style={{ width: 10, height: 10, borderRadius: "50%", background: "#fff" }} />
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.2 }}>
+              <span style={{ fontWeight: 900, fontSize: "1.35rem", color: "#fff", letterSpacing: "-0.02em", fontFamily: "'Outfit', sans-serif" }}>
+                Solco<sup style={{ fontSize: "0.45em", color: "#f5c800", verticalAlign: "super" }}>+</sup>
+              </span>
+              <span style={{ fontWeight: 500, fontSize: "0.66rem", color: "rgba(255,255,255,0.7)", letterSpacing: "0.1em", textTransform: "uppercase" as const }}>
+                Albo Fornitori Digitale
+              </span>
+            </div>
+          </Link>
+
+        </header>
+        <main className="content" style={{ display: "flex", flexDirection: "column", justifyContent: "center" }}>{children}</main>
+        <footer className="app-footer">
+          <div className="app-footer-left">{t("footer.copyright", { year: currentYear })}</div>
+          <div className="app-footer-right">
+            <Link to="/privacy">{t("footer.privacy")}</Link>
+          </div>
+        </footer>
+      </div>
+    );
   }
 
   return (
@@ -81,26 +121,11 @@ export function AppLayout({ children }: { children: ReactNode }) {
             aria-hidden="true"
           />
         ) : null}
-        <div className="topbar-brand">
-          <h1>{t("app.title")}</h1>
-        </div>
+        <Link to="/" style={{ textDecoration: "none", display: "flex", flexDirection: "column", lineHeight: 1.2 }}>
+          <span style={{ fontWeight: 800, fontSize: "clamp(1.25rem, 1.3vw, 1.45rem)", color: "#fff", letterSpacing: "-0.01em", fontFamily: "'Outfit', sans-serif" }}>Solco</span>
+          <span style={{ fontWeight: 500, fontSize: "0.72rem", color: "rgba(255,255,255,0.78)", letterSpacing: "0.04em", textTransform: "uppercase" as const }}>Albo Fornitori</span>
+        </Link>
         <div className="topbar-right">
-          <div className="lang-switch" data-lang={language}>
-            <button
-              type="button"
-              className={language === "it" ? "lang-btn active" : "lang-btn"}
-              onClick={() => setLanguage("it")}
-            >
-              IT
-            </button>
-            <button
-              type="button"
-              className={language === "en" ? "lang-btn active" : "lang-btn"}
-              onClick={() => setLanguage("en")}
-            >
-              EN
-            </button>
-          </div>
           {auth ? (
             <>
               <span className={`user-chip ${roleClass}`}>

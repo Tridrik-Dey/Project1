@@ -212,7 +212,8 @@ export function RevampStep2TipologiaPage() {
       const s2 = JSON.parse(latest.payloadJson) as Record<string, unknown>;
       if (s2.tipologia)                 setSelected(s2.tipologia as string);
       if (Array.isArray(s2.multiRuoli)) setSecondaryRoles(new Set(s2.multiRuoli as string[]));
-      if (s2.ateco)                     setAtecoQuery(s2.ateco as string);
+      if (s2.atecoCode)                  setAtecoQuery(s2.atecoCode as string);
+      else if (s2.ateco)               setAtecoQuery(s2.ateco as string);
     }
 
     const existingAppId = sessionStorage.getItem("revamp_applicationId");
@@ -251,7 +252,7 @@ export function RevampStep2TipologiaPage() {
         tipologia: selected ?? "",
         professionalType,
         multiRuoli: Array.from(secondaryRoles),
-        ateco: atecoQuery,
+        atecoCode: atecoQuery,
       }), false, auth.token);
       handleSave();
     } catch { /* best-effort */ }
@@ -289,7 +290,7 @@ export function RevampStep2TipologiaPage() {
             orientatore: "CONSULENTE", altro: "ALTRO",
           };
           const professionalType = TIPO_TO_PROFESSIONAL[selected!] ?? "ALTRO";
-          await saveRevampApplicationSection(appId, "S2", JSON.stringify({ tipologia: selected, professionalType, multiRuoli: Array.from(multiRuoli), ateco }), true, auth.token);
+          await saveRevampApplicationSection(appId, "S2", JSON.stringify({ tipologia: selected, professionalType, multiRuoli: Array.from(multiRuoli), atecoCode: ateco }), true, auth.token);
         }
       } catch {
         window.alert("Salvataggio non riuscito. Controlla i dati e riprova.");

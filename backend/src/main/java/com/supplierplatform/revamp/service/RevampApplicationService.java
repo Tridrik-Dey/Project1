@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.supplierplatform.common.EntityNotFoundException;
 import com.supplierplatform.revamp.dto.RevampApplicationSummaryDto;
 import com.supplierplatform.revamp.dto.RevampAuditEventInputDto;
+import com.supplierplatform.revamp.dto.RevampApplicationCommunicationDto;
 import com.supplierplatform.revamp.dto.RevampSectionSnapshotDto;
 import com.supplierplatform.revamp.enums.ApplicationStatus;
 import com.supplierplatform.revamp.enums.IntegrationRequestStatus;
@@ -15,17 +16,20 @@ import com.supplierplatform.revamp.enums.SourceChannel;
 import com.supplierplatform.revamp.mapper.RevampApplicationMapper;
 import com.supplierplatform.revamp.model.RevampApplication;
 import com.supplierplatform.revamp.model.RevampApplicationSection;
+import com.supplierplatform.revamp.model.RevampAuditEvent;
 import com.supplierplatform.revamp.model.RevampIntegrationRequest;
 import com.supplierplatform.revamp.model.RevampReviewCase;
 import com.supplierplatform.revamp.model.RevampInvite;
 import com.supplierplatform.revamp.repository.RevampApplicationRepository;
 import com.supplierplatform.revamp.repository.RevampApplicationSectionRepository;
+import com.supplierplatform.revamp.repository.RevampAuditEventRepository;
 import com.supplierplatform.revamp.repository.RevampIntegrationRequestRepository;
 import com.supplierplatform.revamp.repository.RevampReviewCaseRepository;
 import com.supplierplatform.revamp.repository.RevampInviteRepository;
 import com.supplierplatform.user.User;
 import com.supplierplatform.user.UserRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -42,6 +46,7 @@ public class RevampApplicationService {
     private final RevampInviteRepository inviteRepository;
     private final RevampReviewCaseRepository reviewCaseRepository;
     private final RevampIntegrationRequestRepository integrationRequestRepository;
+    private final RevampAuditEventRepository auditEventRepository;
     private final UserRepository userRepository;
     private final RevampApplicationMapper applicationMapper;
     private final RevampProtocolCodeService protocolCodeService;
@@ -177,6 +182,19 @@ public class RevampApplicationService {
                 .toList();
     }
 
+    @Transactional(readOnly = true)
+    public List<RevampApplicationCommunicationDto> getCommunications(UUID applicationId, UUID currentUserId) {
+        RevampApplication application = getApplication(applicationId);
+        if (application.getApplicantUser() == null || !application.getApplicantUser().getId().equals(currentUserId)) {
+            throw new AccessDeniedException("Not authorized to read communications for this application");
+        }
+
+        return auditEventRepository.findByEntityTypeAndEntityIdOrderByOccurredAtDesc("REVAMP_APPLICATION", applicationId).stream()
+                .map(this::toCommunication)
+                .filter(message -> message != null)
+                .toList();
+    }
+
     @Transactional
     public RevampApplicationSummaryDto submit(UUID applicationId) {
         RevampApplication application = getApplication(applicationId);
@@ -263,6 +281,29 @@ public class RevampApplicationService {
     private static String esc(String s) {
         if (s == null) return "";
         return s.replace("\\", "\\\\").replace("\"", "\\\"");
+    }
+
+    private RevampApplicationCommunicationDto toCommunication(RevampAuditEvent event) {
+        String message = switch (event.getEventKey()) {
+            case "revamp.application.submitted" -> "Candidatura ricevuta";
+            case "revamp.review.opened" -> "Candidatura presa in carico";
+            case "revamp.review.verified" -> "Verifica documentale completata";
+            case "revamp.review.integration_requested" -> "Richiesta integrazione inviata";
+            case "revamp.application.integration.answered" -> "Integrazione ricevuta";
+            case "revamp.review.decided" -> decisionMessage(event);
+            default -> null;
+        };
+        return message == null ? null : new RevampApplicationCommunicationDto(event.getEventKey(), message, event.getOccurredAt());
+    }
+
+    private String decisionMessage(RevampAuditEvent event) {
+        JsonNode metadata = event.getMetadataJson();
+        String decision = metadata != null && metadata.hasNonNull("decision") ? metadata.path("decision").asText() : "";
+        return switch (decision) {
+            case "APPROVED" -> "Candidatura approvata";
+            case "REJECTED" -> "Candidatura non approvata";
+            default -> "Decisione registrata";
+        };
     }
 
     private RevampApplication getApplication(UUID applicationId) {
