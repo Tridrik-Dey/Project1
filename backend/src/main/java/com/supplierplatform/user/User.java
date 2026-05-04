@@ -43,6 +43,9 @@ public class User implements UserDetails {
     @Column(name = "is_active", nullable = false)
     private Boolean isActive = true;
 
+    @Column(name = "email_verified", nullable = false)
+    private Boolean emailVerified = false;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "invited_by")
     private User invitedBy;

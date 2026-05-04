@@ -55,6 +55,7 @@ type QuickExportPreset = "albo" | "queue" | "eval" | "annual";
 type ReportChartType = "bar" | "pie";
 type ReportChartWindow = "6m" | "12m";
 type TopicLimit = 5 | 10;
+type ReportYearFilter = "ALL" | number;
 const EXPORT_FIELDS = ["supplier.companyName", "supplier.status", "user.email", "user.fullName"] as const;
 const REPORT_START_YEAR = 2024;
 
@@ -172,7 +173,7 @@ export function AdminReportsPage() {
   const [busy, setBusy] = useState<"excel" | "csv" | QuickExportPreset | null>(null);
   const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
   const [toast, setToast] = useState<{ message: string; type: "error" | "success" } | null>(null);
-  const [year, setYear] = useState<number>(new Date().getFullYear());
+  const [year, setYear] = useState<ReportYearFilter>(new Date().getFullYear());
   const [registryType, setRegistryType] = useState<"ALL" | "ALBO_A" | "ALBO_B">("ALL");
   const [groupCompany, setGroupCompany] = useState<string>("ALL");
   const [category, setCategory] = useState<string>("ALL");
@@ -187,13 +188,14 @@ export function AdminReportsPage() {
 
   const kpis = analytics.kpis;
   const canExport = adminRole === "SUPER_ADMIN" || adminRole === "RESPONSABILE_ALBO";
-  const yearOptions = useMemo(() => {
+  const yearOptions = useMemo<ReportSelectOption<ReportYearFilter>[]>(() => {
     const currentYear = new Date().getFullYear();
     const lastYear = Math.max(REPORT_START_YEAR, currentYear);
-    return Array.from({ length: lastYear - REPORT_START_YEAR + 1 }, (_, index) => {
+    const years = Array.from({ length: lastYear - REPORT_START_YEAR + 1 }, (_, index) => {
       const value = REPORT_START_YEAR + index;
       return { value, label: String(value) };
     });
+    return [{ value: "ALL", label: "Tutti" }, ...years];
   }, []);
   const registryOptions: ReportSelectOption<"ALL" | "ALBO_A" | "ALBO_B">[] = [
     { value: "ALL", label: "Tutti" },
@@ -217,8 +219,9 @@ export function AdminReportsPage() {
   const approvalRatio = analytics.approvalRatePct;
   const hasApprovalData = analytics.evaluationsYtd > 0 || analytics.newRegistrationsYtd > 0;
   const monthlyData = analytics.monthlyPoints;
+  const selectedYearLabel = optionLabel(yearOptions, year);
   const reportFilters: AdminReportFilters = useMemo(() => ({
-    year,
+    year: year === "ALL" ? undefined : year,
     registryType: registryType === "ALL" ? undefined : registryType,
     groupCompany: groupCompany === "ALL" ? undefined : groupCompany,
     category: category === "ALL" ? undefined : category
@@ -337,7 +340,7 @@ export function AdminReportsPage() {
       chips: ["Annuale", "Trend"],
       format: "CSV",
       eta: "~9 sec",
-      filter: `Anno: ${year}`,
+      filter: `Periodo: ${selectedYearLabel}`,
       icon: <BarChart3 className="h-4 w-4" />,
       preset: "annual" as QuickExportPreset
     }
@@ -379,7 +382,7 @@ export function AdminReportsPage() {
       label: "Nuove iscrizioni (YTD)",
       value: analytics.newRegistrationsYtd,
       icon: <UserPlus className="h-4 w-4" />,
-      trend: analytics.newRegistrationsYtd > 0 ? `Anno ${year}` : "Nessun dato",
+      trend: analytics.newRegistrationsYtd > 0 ? `Periodo ${selectedYearLabel}` : "Nessun dato",
       tone: "attention",
       level: "attention",
       levelLabel: analytics.newRegistrationsYtd > 0 ? "Presente" : "Vuoto"
@@ -507,7 +510,7 @@ export function AdminReportsPage() {
         albo: { q: "active", fields: [...EXPORT_FIELDS] },
         queue: { q: "pending", fields: [...EXPORT_FIELDS] },
         eval: { q: "approved", fields: [...EXPORT_FIELDS] },
-        annual: { q: String(year), fields: [...EXPORT_FIELDS] }
+        annual: { q: year === "ALL" ? "all" : String(year), fields: [...EXPORT_FIELDS] }
       };
       const { blob, filename } = await exportAdminSearchReport(token, presets[preset]);
       await triggerDownload(blob, filename);
@@ -550,7 +553,7 @@ export function AdminReportsPage() {
 
         <div className="panel admin-reports-filters">
           <div className="admin-reports-print-filters" aria-hidden="true">
-            <span><strong>Periodo</strong>{optionLabel(yearOptions, year)}</span>
+            <span><strong>Periodo</strong>{selectedYearLabel}</span>
             <span><strong>Tipo Albo</strong>{optionLabel(registryOptions, registryType)}</span>
             <span><strong>Societa del Gruppo</strong>{optionLabel(groupCompanyOptions, groupCompany)}</span>
             <span><strong>Categoria</strong>{optionLabel(categoryOptions, category)}</span>
@@ -619,7 +622,7 @@ export function AdminReportsPage() {
             <div className="admin-reports-card-head">
               <p className="superadmin-card-kicker">TREND</p>
               <div className="admin-reports-trend-head-row">
-                <h3><BarChart3 className="h-4 w-4" /> Iscrizioni mensili - Anno {year}</h3>
+                <h3><BarChart3 className="h-4 w-4" /> Iscrizioni {year === "ALL" ? "- Tutti gli anni" : `mensili - Anno ${year}`}</h3>
                 <div ref={chartSettingsRef} className={`admin-reports-chart-settings-wrap ${chartSettingsOpen ? "is-open" : ""}`}>
                   <button
                     type="button"

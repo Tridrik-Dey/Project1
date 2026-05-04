@@ -2,6 +2,7 @@ import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "re
 import { Building2, ImagePlus, Save, Trash2, UserRound } from "lucide-react";
 import { Link, Navigate, useParams } from "react-router-dom";
 import {
+  checkRevampIdentityAvailability,
   getRevampApplicationSections,
   getRevampApplicationSummary,
   saveRevampApplicationSection,
@@ -167,6 +168,7 @@ export function RevampApplicationStep1Page() {
   const [alboA, setAlboA] = useState<AlboASection1>(emptyA);
   const [alboB, setAlboB] = useState<AlboBSection1>(emptyB);
   const [errors, setErrors] = useState<FieldErrors>({});
+  const [duplicateErrors, setDuplicateErrors] = useState<FieldErrors>({});
   const [profilePhotoPreviewUrl, setProfilePhotoPreviewUrl] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
@@ -180,6 +182,27 @@ export function RevampApplicationStep1Page() {
     if (saveState === "dirty") return t("revamp.step.common.saveState.dirty");
     return t("revamp.step.common.saveState.idle");
   }, [lastSavedAt, saveState, t]);
+
+  const liveDisplayName = registryType === "ALBO_A"
+    ? [alboA.firstName, alboA.lastName].map((part) => part.trim()).filter(Boolean).join(" ")
+    : registryType === "ALBO_B"
+      ? alboB.companyName.trim()
+      : "";
+  const identityName = liveDisplayName || auth?.email || "Utente";
+  const identityInitials = registryType === "ALBO_A"
+    ? `${alboA.firstName.trim().charAt(0)}${alboA.lastName.trim().charAt(0)}`.toUpperCase() || identityName.slice(0, 2).toUpperCase()
+    : identityName.slice(0, 2).toUpperCase();
+
+  useEffect(() => {
+    if (!registryType) return;
+    sessionStorage.setItem("supplier_identity_preview", JSON.stringify({
+      name: identityName,
+      initials: identityInitials
+    }));
+    window.dispatchEvent(new CustomEvent("supplier:identity-preview", {
+      detail: { name: identityName, initials: identityInitials }
+    }));
+  }, [identityInitials, identityName, registryType]);
 
   useEffect(() => {
     async function bootstrap() {
@@ -316,6 +339,61 @@ export function RevampApplicationStep1Page() {
   }, [saveState, alboA, alboB, applicationId, auth?.token, registryType]);
 
   useEffect(() => {
+    if (!applicationId || !auth?.token || !registryType || loading) return;
+
+    const field = registryType === "ALBO_A" ? "taxCode" : "vatNumber";
+    const value = registryType === "ALBO_A" ? alboA.taxCode : alboB.vatNumber;
+    const trimmed = value.trim();
+    if (!trimmed) {
+      setDuplicateErrors((prev) => {
+        const next = { ...prev };
+        delete next[field];
+        return next;
+      });
+      return;
+    }
+
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      checkRevampIdentityAvailability(applicationId, field, trimmed, auth.token)
+        .then((result) => {
+          if (cancelled) return;
+          setDuplicateErrors((prev) => {
+            const next = { ...prev };
+            if (!result.available && result.messageKey) {
+              next[field] = t(result.messageKey);
+            } else {
+              delete next[field];
+            }
+            return next;
+          });
+          setErrors((prev) => {
+            const next = { ...prev };
+            if (!result.available && result.messageKey) {
+              next[field] = t(result.messageKey);
+            } else if (next[field] === t("validation.duplicate.taxId") || next[field] === t("validation.duplicate.vatNumber")) {
+              delete next[field];
+            }
+            return next;
+          });
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setDuplicateErrors((prev) => {
+            const next = { ...prev };
+            delete next[field];
+            return next;
+          });
+        });
+    }, 450);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [alboA.taxCode, alboB.vatNumber, applicationId, auth?.token, loading, registryType, t]);
+
+  useEffect(() => {
     function onBeforeUnload(event: BeforeUnloadEvent) {
       if (saveState !== "dirty" && saveState !== "saving") return;
       event.preventDefault();
@@ -429,10 +507,15 @@ export function RevampApplicationStep1Page() {
     if (!applicationId || !auth?.token || !registryType) return;
 
     const validationErrors = validateForm(registryType);
+    const fieldErrors = { ...validationErrors, ...duplicateErrors };
     if (source === "manual") {
-      setErrors(validationErrors);
+      setErrors(fieldErrors);
     }
-    const completed = Object.keys(validationErrors).length === 0;
+    if (Object.keys(duplicateErrors).length > 0) {
+      setSaveState("error");
+      return;
+    }
+    const completed = Object.keys(fieldErrors).length === 0;
 
     setSaveState("saving");
     try {
@@ -446,7 +529,13 @@ export function RevampApplicationStep1Page() {
       );
       setLastSavedAt(new Date(saved.updatedAt).toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" }));
       setSaveState("saved");
-    } catch {
+    } catch (error) {
+      if (error instanceof HttpError && error.message.startsWith("validation.duplicate.")) {
+        const field = registryType === "ALBO_A" ? "taxCode" : "vatNumber";
+        const message = t(error.message);
+        setDuplicateErrors((prev) => ({ ...prev, [field]: message }));
+        setErrors((prev) => ({ ...prev, [field]: message }));
+      }
       setSaveState("error");
     }
   }

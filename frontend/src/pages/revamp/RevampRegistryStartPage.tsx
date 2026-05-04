@@ -1,10 +1,11 @@
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Navigate, useNavigate, useParams, Link } from "react-router-dom";
-import { ArrowLeft, ArrowRight, Info, Save } from "lucide-react";
+import { ArrowLeft, ArrowRight, CheckCircle, Info, Save } from "lucide-react";
 import { useAuth } from "../../auth/AuthContext";
-import { createRevampApplicationDraft, getMyLatestRevampApplication, getRevampApplicationSections, saveRevampApplicationSection, uploadRevampAttachment } from "../../api/revampApplicationApi";
+import { checkRevampIdentityAvailability, createRevampApplicationDraft, deleteRevampApplicationDraft, getMyLatestRevampApplication, getRevampApplicationSections, saveRevampApplicationSection, uploadRevampAttachment } from "../../api/revampApplicationApi";
 import type { AttachmentUploadResult } from "../../api/revampApplicationApi";
-import { API_BASE_URL } from "../../api/http";
+import { API_BASE_URL, HttpError } from "../../api/http";
+import { clearRevampApplicationIdForRegistry, loadRevampApplicationIdForRegistry, saveRevampApplicationIdForRegistry } from "../../utils/revampApplicationSession";
 
 type RegistryType = "ALBO_A" | "ALBO_B";
 
@@ -184,12 +185,13 @@ const errTxt: React.CSSProperties = { fontSize: "0.74rem", color: ERR };
 
 /* ─── Field components ─────────────────────────────── */
 function Field({
-  label, required, placeholder, value, onChange, error, type = "text", hintText, tooltip
+  label, required, placeholder, value, onChange, error, type = "text", hintText, tooltip, errorTooltip
 }: {
   label: string; required?: boolean; placeholder?: string;
-  value?: string; onChange?: OnChange; error?: string; type?: string; hintText?: string; tooltip?: string;
+  value?: string; onChange?: OnChange; error?: string; type?: string; hintText?: string; tooltip?: string; errorTooltip?: boolean;
 }) {
   const [showTip, setShowTip] = useState(false);
+  const [showErrorTip, setShowErrorTip] = useState(false);
   return (
     <div style={col}>
       <span style={{ ...lbl, display: "flex", alignItems: "center", gap: 4 }}>
@@ -212,6 +214,28 @@ function Field({
             )}
           </span>
         ) : null}
+        {error && errorTooltip ? (
+          <span
+            title={error}
+            tabIndex={0}
+            style={{ position: "relative", display: "inline-flex", alignItems: "center" }}
+            onMouseEnter={() => setShowErrorTip(true)}
+            onMouseLeave={() => setShowErrorTip(false)}
+            onFocus={() => setShowErrorTip(true)}
+            onBlur={() => setShowErrorTip(false)}
+          >
+            <Info size={13} style={{ color: ERR, cursor: "help" }} />
+            {showErrorTip && (
+              <span style={{
+                position: "absolute", bottom: "calc(100% + 6px)", left: "50%",
+                transform: "translateX(-50%)", background: "#991b1b", color: "#fff",
+                fontSize: "0.72rem", padding: "6px 9px", borderRadius: 5,
+                whiteSpace: "nowrap", pointerEvents: "none", zIndex: 120,
+                boxShadow: "0 8px 20px rgba(15, 23, 42, 0.18)"
+              }}>{error}</span>
+            )}
+          </span>
+        ) : null}
       </span>
       <input
         type={type}
@@ -220,7 +244,7 @@ function Field({
         onChange={onChange}
         style={baseInput(!!error)}
       />
-      {error ? <span style={errTxt}>{error}</span> : null}
+      {error && !errorTooltip ? <span style={errTxt}>{error}</span> : null}
     </div>
   );
 }
@@ -307,6 +331,7 @@ export function RevampRegistryStartPage() {
     website: "", linkedin: ""
   });
   const [errors, setErrors]   = useState<Record<string, string>>({});
+  const [duplicateErrors, setDuplicateErrors] = useState<Record<string, string>>({});
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [profilePhotoPreviewUrl, setProfilePhotoPreviewUrl] = useState<string | null>(null);
@@ -314,6 +339,52 @@ export function RevampRegistryStartPage() {
   const [photoError, setPhotoError] = useState<string | null>(null);
   const [photoUploading, setPhotoUploading] = useState(false);
   const photoInputRef = useRef<HTMLInputElement | null>(null);
+
+  async function getOrCreateApplicationId(type: RegistryType): Promise<string> {
+    const existing = loadRevampApplicationIdForRegistry(type);
+    if (existing) return existing;
+    if (!auth?.token) throw new Error("Missing auth token");
+
+    const latest = await getMyLatestRevampApplication(auth.token).catch(() => null);
+    if (latest?.status === "DRAFT" && latest.registryType === type) {
+      saveRevampApplicationIdForRegistry(type, latest.id);
+      return latest.id;
+    }
+
+    const draft = await createRevampApplicationDraft({ registryType: type, sourceChannel: "PUBLIC" }, auth.token);
+    saveRevampApplicationIdForRegistry(type, draft.id);
+    return draft.id;
+  }
+
+  useEffect(() => {
+    if (!auth?.token || !registryType) return;
+    const otherType: RegistryType = registryType === "ALBO_A" ? "ALBO_B" : "ALBO_A";
+    const idsToDelete = new Set<string>();
+    const storedOtherId = loadRevampApplicationIdForRegistry(otherType);
+    if (storedOtherId) idsToDelete.add(storedOtherId);
+
+    let cancelled = false;
+    getMyLatestRevampApplication(auth.token)
+      .then(latest => {
+        if (cancelled) return;
+        if (latest?.status === "DRAFT" && latest.registryType === otherType) {
+          idsToDelete.add(latest.id);
+        }
+        idsToDelete.forEach(id => {
+          deleteRevampApplicationDraft(id, auth.token)
+            .catch(() => {})
+            .finally(() => clearRevampApplicationIdForRegistry(otherType));
+        });
+        if (idsToDelete.size === 0) {
+          clearRevampApplicationIdForRegistry(otherType);
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, [auth?.token, registryType]);
 
   useEffect(() => {
     if (!auth?.token || !registryType) return;
@@ -350,16 +421,16 @@ export function RevampRegistryStartPage() {
       }
     }
 
-    const existingAppId = sessionStorage.getItem("revamp_applicationId");
+    const expectedType = registryType === "ALBO_A" ? "ALBO_A" : "ALBO_B";
+    const existingAppId = loadRevampApplicationIdForRegistry(expectedType);
     if (existingAppId) {
       getRevampApplicationSections(existingAppId, auth.token).then(applyS1).catch(() => {});
       return;
     }
 
-    const expectedType = registryType === "ALBO_A" ? "ALBO_A" : "ALBO_B";
     getMyLatestRevampApplication(auth.token).then(app => {
       if (!app || app.status !== "DRAFT" || app.registryType !== expectedType) return;
-      sessionStorage.setItem("revamp_applicationId", app.id);
+      saveRevampApplicationIdForRegistry(expectedType, app.id);
       return getRevampApplicationSections(app.id, auth.token!).then(applyS1);
     }).catch(() => {});
   }, [auth?.token, registryType]);
@@ -369,8 +440,56 @@ export function RevampRegistryStartPage() {
   }, [profilePhotoPreviewUrl]);
 
   useEffect(() => {
-    if (!profilePhotoAttachment || profilePhotoPreviewUrl || !auth?.token) return;
-    const appId = sessionStorage.getItem("revamp_applicationId");
+    if (!auth?.token || !registryType) return;
+    const field = registryType === "ALBO_A" ? "taxCode" : "vatNumber";
+    const value = registryType === "ALBO_A" ? form.taxCode : form.vatNumber;
+    const trimmed = value.trim();
+    if (!trimmed) {
+      setDuplicateErrors(prev => {
+        const next = { ...prev };
+        delete next[field];
+        return next;
+      });
+      return;
+    }
+
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      getOrCreateApplicationId(registryType)
+        .then(appId => checkRevampIdentityAvailability(appId, field, trimmed, auth.token))
+        .then(result => {
+          if (cancelled) return;
+          const message = field === "taxCode"
+            ? "Codice fiscale gia presente. Inserisci un valore diverso."
+            : "Partita IVA gia presente. Inserisci un valore diverso.";
+          setDuplicateErrors(prev => {
+            const next = { ...prev };
+            if (!result.available) next[field] = message;
+            else delete next[field];
+            return next;
+          });
+          if (!result.available) {
+            setSaveError(null);
+          }
+          setErrors(prev => {
+            const next = { ...prev };
+            if (!result.available) next[field] = message;
+            else if (next[field] === message) delete next[field];
+            return next;
+          });
+        })
+        .catch(() => {});
+    }, 450);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [auth?.token, form.taxCode, form.vatNumber, registryType]);
+
+  useEffect(() => {
+    if (!profilePhotoAttachment || profilePhotoPreviewUrl || !auth?.token || !registryType) return;
+    const appId = loadRevampApplicationIdForRegistry(registryType);
     if (!appId) return;
     let cancelled = false;
     fetch(
@@ -398,15 +517,7 @@ export function RevampRegistryStartPage() {
     setPhotoUploading(true);
     setProfilePhotoPreviewUrl(prev => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(file); });
     try {
-      let appId = sessionStorage.getItem("revamp_applicationId");
-      if (!appId && auth?.token) {
-        const draft = await createRevampApplicationDraft(
-          { registryType: registryType === "ALBO_A" ? "ALBO_A" : "ALBO_B", sourceChannel: "PUBLIC" },
-          auth.token
-        );
-        appId = draft.id;
-        sessionStorage.setItem("revamp_applicationId", appId);
-      }
+      const appId = await getOrCreateApplicationId(registryType === "ALBO_A" ? "ALBO_A" : "ALBO_B");
       if (!appId || !auth?.token) {
         setPhotoError("Sessione scaduta. Effettua nuovamente il login.");
         return;
@@ -427,18 +538,37 @@ export function RevampRegistryStartPage() {
     if (photoInputRef.current) photoInputRef.current.value = "";
   }
 
-  if (!registryType) return <Navigate to="/apply" replace />;
-
   const isA        = registryType === "ALBO_A";
   const accent     = isA ? NAVY : GREEN;
   const title      = isA ? "Albo A — Professionisti" : "Albo B — Aziende";
   const pivaReq    = PIVA_REQUIRED_REGIMES.has(form.taxRegime);
   const showOtherRegime = form.taxRegime === "altro";
+  const liveDisplayName = [form.firstName, form.lastName]
+    .map(part => part.trim())
+    .filter(Boolean)
+    .join(" ");
+  const identityName = liveDisplayName || auth?.email || "Utente";
+  const identityInitials =
+    `${form.firstName.trim().charAt(0)}${form.lastName.trim().charAt(0)}`.toUpperCase()
+    || identityName.slice(0, 2).toUpperCase();
+
+  useEffect(() => {
+    sessionStorage.setItem("supplier_identity_preview", JSON.stringify({
+      name: identityName,
+      initials: identityInitials
+    }));
+    window.dispatchEvent(new CustomEvent("supplier:identity-preview", {
+      detail: { name: identityName, initials: identityInitials }
+    }));
+  }, [identityInitials, identityName]);
+
+  if (!registryType) return <Navigate to="/apply" replace />;
 
   function set(field: keyof typeof form): OnChange {
     return (e) => {
       setForm(prev => ({ ...prev, [field]: e.target.value }));
       if (errors[field]) setErrors(prev => { const n = { ...prev }; delete n[field]; return n; });
+      if (duplicateErrors[field]) setDuplicateErrors(prev => { const n = { ...prev }; delete n[field]; return n; });
     };
   }
 
@@ -513,15 +643,7 @@ export function RevampRegistryStartPage() {
       return;
     }
     try {
-      let appId = sessionStorage.getItem("revamp_applicationId");
-      if (!appId) {
-        const draft = await createRevampApplicationDraft(
-          { registryType: isA ? "ALBO_A" : "ALBO_B", sourceChannel: "PUBLIC" },
-          auth.token
-        );
-        appId = draft.id;
-        sessionStorage.setItem("revamp_applicationId", appId);
-      }
+      const appId = await getOrCreateApplicationId(isA ? "ALBO_A" : "ALBO_B");
       const payload = JSON.stringify({
         firstName: form.firstName, lastName: form.lastName,
         birthDate: form.birthDate, birthPlace: form.birthPlace,
@@ -538,7 +660,16 @@ export function RevampRegistryStartPage() {
       });
       await saveRevampApplicationSection(appId, "S1", payload, false, auth.token);
       handleSave();
-    } catch {
+    } catch (error) {
+      if (error instanceof HttpError && error.message.startsWith("validation.duplicate.")) {
+        const field = isA ? "taxCode" : "vatNumber";
+        const message = isA
+          ? "Codice fiscale gia presente. Inserisci un valore diverso."
+          : "Partita IVA gia presente. Inserisci un valore diverso.";
+        setDuplicateErrors(prev => ({ ...prev, [field]: message }));
+        setErrors(prev => ({ ...prev, [field]: message }));
+        return;
+      }
       setSaveError("Salvataggio non riuscito. Riprova.");
     }
   }
@@ -547,7 +678,8 @@ export function RevampRegistryStartPage() {
     ev.preventDefault();
     setSaveError(null);
     const errs = validate();
-    if (Object.keys(errs).length) { setErrors(errs); return; }
+    const mergedErrors = { ...errs, ...duplicateErrors };
+    if (Object.keys(mergedErrors).length) { setErrors(mergedErrors); return; }
     handleSave();
     sessionStorage.setItem("revamp_s1", JSON.stringify({
       firstName: form.firstName, lastName: form.lastName,
@@ -565,17 +697,29 @@ export function RevampRegistryStartPage() {
     }));
     if (auth?.token) {
       try {
-        let appId = sessionStorage.getItem("revamp_applicationId");
-        if (!appId) {
-          const draft = await createRevampApplicationDraft(
-            { registryType: isA ? "ALBO_A" : "ALBO_B", sourceChannel: "PUBLIC" },
-            auth.token
-          );
-          appId = draft.id;
-          sessionStorage.setItem("revamp_applicationId", appId);
+        const appId = await getOrCreateApplicationId(isA ? "ALBO_A" : "ALBO_B");
+        const identityField = isA ? "taxCode" : "vatNumber";
+        const identityValue = isA ? form.taxCode : form.vatNumber;
+        const availability = await checkRevampIdentityAvailability(appId, identityField, identityValue, auth.token);
+        if (!availability.available) {
+          const message = isA
+            ? "Codice fiscale gia presente. Inserisci un valore diverso."
+            : "Partita IVA gia presente. Inserisci un valore diverso.";
+          setDuplicateErrors(prev => ({ ...prev, [identityField]: message }));
+          setErrors(prev => ({ ...prev, [identityField]: message }));
+          return;
         }
         await saveRevampApplicationSection(appId, "S1", sessionStorage.getItem("revamp_s1") ?? "{}", true, auth.token);
-      } catch {
+      } catch (error) {
+        if (error instanceof HttpError && error.message.startsWith("validation.duplicate.")) {
+          const field = isA ? "taxCode" : "vatNumber";
+          const message = isA
+            ? "Codice fiscale gia presente. Inserisci un valore diverso."
+            : "Partita IVA gia presente. Inserisci un valore diverso.";
+          setDuplicateErrors(prev => ({ ...prev, [field]: message }));
+          setErrors(prev => ({ ...prev, [field]: message }));
+          return;
+        }
         setSaveError("Salvataggio non riuscito. Controlla i dati e riprova.");
         return;
       }
@@ -583,7 +727,10 @@ export function RevampRegistryStartPage() {
     navigate(`/apply/${registryParam}/step/2`);
   }
 
-  const errorCount = Object.keys(errors).length;
+  const summaryErrors = Object.fromEntries(
+    Object.entries(errors).filter(([field]) => !duplicateErrors[field])
+  );
+  const errorCount = Object.keys(summaryErrors).length;
 
   return (
     <div style={{ margin: "-1rem", background: "#f0f4f8", minHeight: "100%" }}>
@@ -603,8 +750,8 @@ export function RevampRegistryStartPage() {
           <div style={{ fontSize: "0.75rem", color: MUTED }}>Questionario di iscrizione</div>
         </div>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
-          <button type="button" onClick={() => void handleSaveDraft()} style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 16px", background: "#fff", border: "1.5px solid #d1d5db", borderRadius: 6, fontWeight: 600, fontSize: "0.82rem", cursor: "pointer", color: "#374151" }}>
-            <Save size={14} />
+          <button type="button" className={`wizard-save-button${savedAt ? " is-saved" : ""}`} onClick={() => void handleSaveDraft()} style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 16px", background: "#fff", border: "1.5px solid #d1d5db", borderRadius: 6, fontWeight: 600, fontSize: "0.82rem", cursor: "pointer", color: "#374151" }}>
+            {savedAt ? <CheckCircle size={14} /> : <Save size={14} />}
             {savedAt ? `Bozza salvata ${savedAt}` : "Salva bozza"}
           </button>
           {saveError ? <span style={{ fontSize: "0.72rem", color: "#dc2626" }}>{saveError}</span> : null}
@@ -646,11 +793,6 @@ export function RevampRegistryStartPage() {
                   Compila i tuoi dati personali e di contatto. I campi con <span style={{ color: ERR }}>*</span> sono obbligatori.
                 </p>
               </div>
-              {savedAt ? (
-                <span style={{ display: "flex", alignItems: "center", gap: 5, fontSize: "0.75rem", color: "#16a34a", background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 4, padding: "3px 10px", whiteSpace: "nowrap" }}>
-                  ✓ Bozza salvata {savedAt}
-                </span>
-              ) : null}
             </div>
             <div style={{ height: 1, background: "#f3f4f6", margin: "16px 0 4px" }} />
 
@@ -724,6 +866,7 @@ export function RevampRegistryStartPage() {
                 label="Codice Fiscale" required
                 value={form.taxCode} onChange={set("taxCode")} error={errors.taxCode}
                 placeholder="RSSMRA80C15F205X"
+                errorTooltip={!!duplicateErrors.taxCode}
               />
               <SelectField
                 label="Regime fiscale" required
@@ -734,6 +877,7 @@ export function RevampRegistryStartPage() {
                 label="Partita IVA" required={pivaReq}
                 value={form.vatNumber} onChange={set("vatNumber")} error={errors.vatNumber}
                 placeholder="12345678901"
+                errorTooltip={!!duplicateErrors.vatNumber}
                 hintText={pivaReq ? "obbligatoria per questo regime" : "opzionale — 11 cifre"}
               />
             </div>
@@ -808,7 +952,7 @@ export function RevampRegistryStartPage() {
                   ⚠ {errorCount} {errorCount === 1 ? "campo richiede attenzione" : "campi richiedono attenzione"}:
                 </div>
                 <ul style={{ margin: 0, paddingLeft: 16 }}>
-                  {Object.entries(errors).map(([field, msg]) => (
+                  {Object.entries(summaryErrors).map(([field, msg]) => (
                     <li key={field} style={{ fontSize: "0.8rem", color: "#78350f" }}>
                       <strong>{FIELD_LABELS[field] ?? field}</strong> — {msg}
                     </li>
@@ -820,8 +964,8 @@ export function RevampRegistryStartPage() {
         </div>
 
         {/* ── Bottom navigation ── */}
-        <div style={{ background: "#fff", borderTop: "1px solid #e5e7eb", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 40px", position: "sticky", bottom: 0 }}>
-          <Link
+        <div className="wizard-bottom-nav" style={{ background: "#fff", borderTop: "1px solid #e5e7eb", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 40px", position: "sticky", bottom: 0 }}>
+          <Link className="wizard-nav-button wizard-nav-button-prev"
             to="/apply"
             style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 20px", background: "#fff", border: `1.5px solid ${accent}`, borderRadius: 6, fontWeight: 600, fontSize: "0.85rem", color: accent, textDecoration: "none" }}
           >
@@ -835,7 +979,7 @@ export function RevampRegistryStartPage() {
             </div>
           </div>
 
-          <button
+          <button className="wizard-nav-button wizard-nav-button-next"
             type="submit"
             style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 20px", background: accent, color: "#fff", border: "none", borderRadius: 6, fontWeight: 600, fontSize: "0.85rem", cursor: "pointer" }}
           >

@@ -4,6 +4,7 @@ import { ArrowLeft, CheckCircle2, Clock, Copy, Edit2, Info, Mail, Send } from "l
 import { useAuth } from "../../auth/AuthContext";
 import { getRevampApplicationSections, submitRevampApplication } from "../../api/revampApplicationApi";
 import { getMissingRequiredSections } from "./revampFlow";
+import { loadRevampApplicationIdForRegistry } from "../../utils/revampApplicationSession";
 
 const NAVY  = "#0f2a52";
 const GREEN = "#1a5c3a";
@@ -172,6 +173,7 @@ export function RevampRecapPage() {
 
   const accent = isA ? NAVY : GREEN;
   const title  = isA ? "Albo A — Professionisti" : "Albo B — Aziende";
+  const registryType = isA ? "ALBO_A" : "ALBO_B";
 
   const [s1, setS1] = useState<S1>(() => JSON.parse(sessionStorage.getItem("revamp_s1") ?? "{}"));
   const [tipologia, setTipologia] = useState(() => sessionStorage.getItem("revamp_tipologia") ?? "");
@@ -188,7 +190,7 @@ export function RevampRecapPage() {
 
   useEffect(() => {
     if (!auth?.token) return;
-    const appId = sessionStorage.getItem("revamp_applicationId");
+    const appId = loadRevampApplicationIdForRegistry(registryType);
     if (!appId) return;
     getRevampApplicationSections(appId, auth.token).then(sections => {
       setMissingSections(getMissingRequiredSections(isA ? "ALBO_A" : "ALBO_B", sections));
@@ -227,14 +229,14 @@ export function RevampRecapPage() {
     }).catch(() => {
       setSubmitError("Impossibile verificare il salvataggio sul server. Riprova.");
     });
-  }, [auth?.token, isA, isB]);
+  }, [auth?.token, isA, isB, registryType]);
 
   async function handleInvia() {
     if (submitting) return;
     setSubmitError(null);
     setSubmitting(true);
     try {
-      const appId = sessionStorage.getItem("revamp_applicationId");
+      const appId = loadRevampApplicationIdForRegistry(registryType);
       if (!appId || !auth?.token) {
         setSubmitError("Sessione non valida. Rientra nell'area fornitore e riprova.");
         setSubmitting(false);

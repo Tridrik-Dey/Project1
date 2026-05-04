@@ -62,6 +62,7 @@ public class AuthService {
                 .fullName(user.getFullName())
                 .role(user.getRole())
                 .adminGovernanceRole(resolveGovernanceRole(user))
+                .emailVerified(Boolean.TRUE.equals(user.getEmailVerified()))
                 .build();
     }
 

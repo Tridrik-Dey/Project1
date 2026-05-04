@@ -1,15 +1,32 @@
 import { ChangeEvent, useEffect, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import { ArrowLeft, ArrowRight, Info, Save, Upload } from "lucide-react";
+import { ArrowLeft, ArrowRight, CheckCircle, Info, Save, Upload } from "lucide-react";
 import { useAuth } from "../../auth/AuthContext";
-import { getMyLatestRevampApplication, getRevampApplicationSections, saveRevampApplicationSection } from "../../api/revampApplicationApi";
+import {
+  createRevampApplicationDraft,
+  answerRevampIntegrationRequest,
+  getMyLatestRevampApplication,
+  getRevampApplicationSections,
+  saveRevampApplicationSection,
+  uploadRevampAttachment,
+  type AttachmentUploadResult
+} from "../../api/revampApplicationApi";
+import { loadRevampApplicationIdForRegistry, saveRevampApplicationIdForRegistry } from "../../utils/revampApplicationSession";
+import { clearRevampIntegrationEditSession, isRevampIntegrationEditFor } from "../../utils/revampIntegrationEditSession";
 
 const GREEN = "#1a5c3a";
 const MUTED = "#6b7280";
 const ERR = "#dc2626";
 const STEPS_B = ["Dati aziendali", "Struttura", "Servizi", "Certificazioni", "Dichiarazioni"];
 
-type CertRecord = { presente: "si" | "no" | ""; enteCertificatore: string; scadenza: string; fileName: string };
+type CertRecord = {
+  presente: "si" | "no" | "";
+  enteCertificatore: string;
+  scadenza: string;
+  fileName: string;
+  attachment?: AttachmentUploadResult | null;
+};
+type AttachmentDocumentType = "VISURA_CAMERALE" | "DURC" | "COMPANY_PROFILE" | "CERTIFICATION";
 
 const CERTS_ISO: { key: string; label: string; desc: string }[] = [
   { key: "iso9001",  label: "ISO 9001 — Qualità", desc: "Sistema di gestione per la qualità" },
@@ -59,9 +76,10 @@ function StepBar({ active }: { active: number }) {
   );
 }
 
-function FileInput({ label, required, fileName, onChange, hintText, tooltip }: {
+function FileInput({ label, required, fileName, onChange, hintText, tooltip, uploading }: {
   label: string; required?: boolean; fileName: string; hintText?: string; tooltip?: string;
   onChange: (e: ChangeEvent<HTMLInputElement>) => void;
+  uploading?: boolean;
 }) {
   const [showTip, setShowTip] = useState(false);
   return (
@@ -87,12 +105,12 @@ function FileInput({ label, required, fileName, onChange, hintText, tooltip }: {
           </span>
         ) : null}
       </span>
-      <label style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 12px", border: `1.5px dashed ${fileName ? GREEN : "#d1d5db"}`, borderRadius: 6, cursor: "pointer", background: fileName ? "#f0fdf4" : "#fafafa", transition: "border-color .15s" }}>
+      <label style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 12px", border: `1.5px dashed ${fileName ? GREEN : "#d1d5db"}`, borderRadius: 6, cursor: uploading ? "wait" : "pointer", background: fileName ? "#f0fdf4" : "#fafafa", transition: "border-color .15s", opacity: uploading ? 0.7 : 1 }}>
         <Upload size={14} color={fileName ? GREEN : "#9ca3af"} />
         <span style={{ fontSize: "0.83rem", color: fileName ? GREEN : "#6b7280", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {fileName || "Seleziona file PDF (max 5 MB)"}
+          {uploading ? "Caricamento in corso..." : (fileName || "Seleziona file PDF (max 5 MB)")}
         </span>
-        <input type="file" accept=".pdf" onChange={onChange} style={{ display: "none" }} />
+        <input type="file" accept=".pdf" onChange={onChange} disabled={uploading} style={{ display: "none" }} />
       </label>
     </div>
   );
@@ -101,6 +119,7 @@ function FileInput({ label, required, fileName, onChange, hintText, tooltip }: {
 export function RevampAlboBStep4CertificazioniPage() {
   const navigate = useNavigate();
   const { auth } = useAuth();
+  const integrationEdit = isRevampIntegrationEditFor("ALBO_B", 4);
 
   const [certs, setCerts] = useState<Record<string, CertRecord>>(
     Object.fromEntries(CERTS_ISO.map(c => [c.key, { presente: "", enteCertificatore: "", scadenza: "", fileName: "" }]))
@@ -116,9 +135,15 @@ export function RevampAlboBStep4CertificazioniPage() {
   const [companyProf, setCompanyProf] = useState("");
   const [durc,        setDurc]        = useState("");
   const [certAlleg,   setCertAlleg]   = useState("");
+  const [visuraAttachment, setVisuraAttachment] = useState<AttachmentUploadResult | null>(null);
+  const [companyProfAttachment, setCompanyProfAttachment] = useState<AttachmentUploadResult | null>(null);
+  const [durcAttachment, setDurcAttachment] = useState<AttachmentUploadResult | null>(null);
+  const [certAllegAttachment, setCertAllegAttachment] = useState<AttachmentUploadResult | null>(null);
+  const [uploadingField, setUploadingField] = useState<string | null>(null);
 
   const [triedSubmit, setTriedSubmit] = useState(false);
   const [savedAt,     setSavedAt]     = useState<string | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!auth?.token) return;
@@ -144,9 +169,52 @@ export function RevampAlboBStep4CertificazioniPage() {
       if (s4.accreditamentoRegioni)             setAccRegioni(s4.accreditamentoRegioni as string);
       if (s4.accreditamentoTipoFormazione)      setAccTipo(s4.accreditamentoTipoFormazione as string);
       if (s4.accreditamentoServiziLavoro)       setAccLavoro(s4.accreditamentoServiziLavoro as "si" | "no");
+      if (Array.isArray(s4.attachments)) {
+        type AttMeta = {
+          documentType: string;
+          fileName: string;
+          storageKey: string;
+          mimeType: string;
+          sizeBytes: number;
+          certificationKey?: string;
+        };
+        for (const att of s4.attachments as AttMeta[]) {
+          if (!att.fileName || !att.storageKey || att.storageKey === "upload-pending") continue;
+          const result: AttachmentUploadResult = {
+            fileName: att.fileName,
+            storageKey: att.storageKey,
+            mimeType: att.mimeType,
+            sizeBytes: att.sizeBytes
+          };
+          if (att.documentType === "VISURA_CAMERALE") {
+            setVisura(att.fileName);
+            setVisuraAttachment(result);
+          } else if (att.documentType === "DURC") {
+            setDurc(att.fileName);
+            setDurcAttachment(result);
+          } else if (att.documentType === "COMPANY_PROFILE") {
+            setCompanyProf(att.fileName);
+            setCompanyProfAttachment(result);
+          } else if (att.documentType === "CERTIFICATION") {
+            if (att.certificationKey && CERTS_ISO.some(c => c.key === att.certificationKey)) {
+              setCerts(prev => ({
+                ...prev,
+                [att.certificationKey!]: {
+                  ...prev[att.certificationKey!],
+                  fileName: att.fileName,
+                  attachment: result
+                }
+              }));
+            } else {
+              setCertAlleg(att.fileName);
+              setCertAllegAttachment(result);
+            }
+          }
+        }
+      }
     }
 
-    const existingAppId = sessionStorage.getItem("revamp_applicationId");
+    const existingAppId = loadRevampApplicationIdForRegistry("ALBO_B");
     if (existingAppId) {
       getRevampApplicationSections(existingAppId, auth.token).then(applyS4).catch(() => {});
       return;
@@ -154,7 +222,7 @@ export function RevampAlboBStep4CertificazioniPage() {
 
     getMyLatestRevampApplication(auth.token).then(app => {
       if (!app || app.status !== "DRAFT" || app.registryType !== "ALBO_B") return;
-      sessionStorage.setItem("revamp_applicationId", app.id);
+      saveRevampApplicationIdForRegistry("ALBO_B", app.id);
       return getRevampApplicationSections(app.id, auth!.token!).then(applyS4);
     }).catch(() => {});
   }, [auth?.token]);
@@ -163,11 +231,110 @@ export function RevampAlboBStep4CertificazioniPage() {
     setCerts(prev => ({ ...prev, [key]: { ...prev[key], [field]: value } }));
   }
 
-  function handleFile(setter: (name: string) => void) {
-    return (e: ChangeEvent<HTMLInputElement>) => {
+  function updateCertAttachment(key: string, result: AttachmentUploadResult) {
+    setCerts(prev => ({
+      ...prev,
+      [key]: {
+        ...prev[key],
+        fileName: result.fileName,
+        attachment: result
+      }
+    }));
+  }
+
+  async function ensureApplicationId(): Promise<string | null> {
+    if (!auth?.token) return null;
+    const existing = loadRevampApplicationIdForRegistry("ALBO_B");
+    if (existing) return existing;
+    try {
+      const draft = await createRevampApplicationDraft({ registryType: "ALBO_B", sourceChannel: "PUBLIC" }, auth.token);
+      saveRevampApplicationIdForRegistry("ALBO_B", draft.id);
+      return draft.id;
+    } catch {
+      setUploadError("Impossibile avviare la domanda. Riprova.");
+      return null;
+    }
+  }
+
+  function handleFile(
+    documentType: AttachmentDocumentType,
+    setName: (name: string) => void,
+    setAttachment: (result: AttachmentUploadResult) => void,
+    maxMB: number
+  ) {
+    return async (e: ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
-      if (file) setter(file.name);
+      if (!file || !auth?.token) return;
+      if (file.size > maxMB * 1024 * 1024) {
+        setUploadError(`Il file è troppo grande. Massimo ${maxMB} MB.`);
+        e.target.value = "";
+        return;
+      }
+      const appId = await ensureApplicationId();
+      if (!appId) return;
+      setUploadingField(documentType);
+      setUploadError(null);
+      try {
+        const result = await uploadRevampAttachment(appId, file, auth.token);
+        setName(result.fileName || file.name);
+        setAttachment(result);
+      } catch {
+        setUploadError("Caricamento file non riuscito. Riprova.");
+        e.target.value = "";
+      } finally {
+        setUploadingField(null);
+      }
     };
+  }
+
+  function handleCertificationFile(certKey: string) {
+    return async (e: ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file || !auth?.token) return;
+      if (file.size > 5 * 1024 * 1024) {
+        setUploadError("Il file è troppo grande. Massimo 5 MB.");
+        e.target.value = "";
+        return;
+      }
+      const appId = await ensureApplicationId();
+      if (!appId) return;
+      const uploadKey = `CERTIFICATION:${certKey}`;
+      setUploadingField(uploadKey);
+      setUploadError(null);
+      try {
+        const result = await uploadRevampAttachment(appId, file, auth.token);
+        updateCertAttachment(certKey, result);
+      } catch {
+        setUploadError("Caricamento file non riuscito. Riprova.");
+        e.target.value = "";
+      } finally {
+        setUploadingField(null);
+      }
+    };
+  }
+
+  function buildAttachments() {
+    const attachments: Array<AttachmentUploadResult & {
+      documentType: AttachmentDocumentType;
+      certificationKey?: string;
+      certificationLabel?: string;
+    }> = [];
+    if (visuraAttachment) attachments.push({ documentType: "VISURA_CAMERALE", ...visuraAttachment });
+    if (durcAttachment) attachments.push({ documentType: "DURC", ...durcAttachment });
+    if (companyProfAttachment) attachments.push({ documentType: "COMPANY_PROFILE", ...companyProfAttachment });
+    for (const cert of CERTS_ISO) {
+      const attachment = certs[cert.key]?.attachment;
+      if (attachment) {
+        attachments.push({
+          documentType: "CERTIFICATION",
+          certificationKey: cert.key,
+          certificationLabel: cert.label,
+          ...attachment
+        });
+      }
+    }
+    if (certAllegAttachment) attachments.push({ documentType: "CERTIFICATION", ...certAllegAttachment });
+    return attachments;
   }
 
   function validate(): Record<string, string> {
@@ -179,12 +346,16 @@ export function RevampAlboBStep4CertificazioniPage() {
         if (!rec.enteCertificatore.trim()) e[`cert_${c.key}_ente`] = "Inserisci l'ente certificatore.";
         if (!rec.scadenza.trim()) { e[`cert_${c.key}_scad`] = "Inserisci la scadenza."; }
         else if (!MY_RE.test(rec.scadenza.trim())) { e[`cert_${c.key}_scad`] = "Formato MM/AAAA non valido."; }
+        if (!rec.attachment) e[`cert_${c.key}_file`] = "Allega il certificato PDF.";
       }
     }
     if (!accFormazione) e.accFormazione = "Campo obbligatorio.";
     if (!accLavoro)     e.accLavoro     = "Campo obbligatorio.";
-    if (!visura)  e.visura = "La visura camerale è obbligatoria.";
-    if (!durc)    e.durc   = "Il DURC è obbligatorio.";
+    if (!visuraAttachment)  e.visura = "La visura camerale è obbligatoria.";
+    if (!durcAttachment)    e.durc   = "Il DURC è obbligatorio.";
+    if ((altreCert.trim().length > 0 || accFormazione === "si" || accLavoro === "si") && !certAllegAttachment) {
+      e.certAlleg = "Allega i certificati o accreditamenti dichiarati.";
+    }
     return e;
   }
 
@@ -196,7 +367,7 @@ export function RevampAlboBStep4CertificazioniPage() {
   async function handleSaveDraft() {
     if (!auth?.token) return;
     try {
-      const appId = sessionStorage.getItem("revamp_applicationId");
+      const appId = loadRevampApplicationIdForRegistry("ALBO_B");
       if (!appId) return;
       await saveRevampApplicationSection(appId, "S4", JSON.stringify({
         certificazioni: Object.fromEntries(CERTS_ISO.map(c => [c.key, { ...certs[c.key] }])),
@@ -205,6 +376,8 @@ export function RevampAlboBStep4CertificazioniPage() {
         accreditamentoRegioni: accRegioni,
         accreditamentoTipoFormazione: accTipo,
         accreditamentoServiziLavoro: accLavoro,
+        allegati: { visura, companyProfile: companyProf, durc, certificatiAllegati: certAlleg },
+        attachments: buildAttachments(),
       }), false, auth.token);
       handleSave();
     } catch { /* best-effort */ }
@@ -225,30 +398,20 @@ export function RevampAlboBStep4CertificazioniPage() {
       allegati: { visura, companyProfile: companyProf, durc, certificatiAllegati: certAlleg },
     };
     sessionStorage.setItem("revamp_b4", JSON.stringify(payload));
+    let savedAppId: string | null = null;
     if (auth?.token) {
       try {
-        const appId = sessionStorage.getItem("revamp_applicationId");
+        const appId = loadRevampApplicationIdForRegistry("ALBO_B");
         if (appId) {
+          savedAppId = appId;
           const hasISO9001 = certs.iso9001?.presente === "si";
-          const hasCerts = hasISO9001
-            || CERTS_ISO.some(c => certs[c.key]?.presente === "si")
-            || altreCert.trim().length > 0
-            || accFormazione === "si"
-            || accLavoro === "si";
-          const attachments: { documentType: string; fileName: string; storageKey: string }[] = [
-            { documentType: "VISURA_CAMERALE", fileName: visura || "visura_camerale.pdf", storageKey: "upload-pending" },
-            { documentType: "DURC",            fileName: durc   || "durc.pdf",            storageKey: "upload-pending" },
-          ];
-          if (hasCerts) {
-            attachments.push({ documentType: "CERTIFICATION", fileName: certAlleg || "certificazione.pdf", storageKey: "upload-pending" });
-          }
           const apiPayload = {
             ...payload,
             iso9001:              hasISO9001 ? "YES" : "NO",
             accreditationSummary: accFormazione === "si" ? (accTipo || "Accreditato") : "",
             accreditationTraining: accFormazione,
             employmentServicesAccreditation: accLavoro,
-            attachments,
+            attachments: buildAttachments(),
           };
           await saveRevampApplicationSection(appId, "S4", JSON.stringify(apiPayload), true, auth.token);
         }
@@ -257,7 +420,16 @@ export function RevampAlboBStep4CertificazioniPage() {
         return;
       }
     }
-    navigate("/apply/albo-b/step/5");
+    if (integrationEdit && auth?.token && savedAppId) {
+      try {
+        await answerRevampIntegrationRequest(savedAppId, auth.token);
+        clearRevampIntegrationEditSession();
+      } catch {
+        window.alert("Invio integrazione non riuscito. Controlla i dati e riprova.");
+        return;
+      }
+    }
+    navigate(integrationEdit?.returnPath ?? "/apply/albo-b/step/5");
   }
 
   const errors = triedSubmit ? validate() : {};
@@ -277,12 +449,18 @@ export function RevampAlboBStep4CertificazioniPage() {
           <div style={{ fontWeight: 700, fontSize: "1rem", color: "#1e293b" }}>Albo B — Aziende</div>
           <div style={{ fontSize: "0.75rem", color: MUTED }}>Questionario di iscrizione</div>
         </div>
-        <button type="button" onClick={() => void handleSaveDraft()} style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 16px", background: "#fff", border: "1.5px solid #d1d5db", borderRadius: 6, fontWeight: 600, fontSize: "0.82rem", cursor: "pointer", color: "#374151" }}>
-          <Save size={14} /> {savedAt ? `Bozza salvata ${savedAt}` : "Salva bozza"}
+        <button type="button" className={`wizard-save-button${savedAt ? " is-saved" : ""}`} onClick={() => void handleSaveDraft()} style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 16px", background: "#fff", border: "1.5px solid #d1d5db", borderRadius: 6, fontWeight: 600, fontSize: "0.82rem", cursor: "pointer", color: "#374151" }}>
+          {savedAt ? <CheckCircle size={14} /> : <Save size={14} />} {savedAt ? `Bozza salvata ${savedAt}` : "Salva bozza"}
         </button>
       </div>
 
-      <StepBar active={3} />
+      {integrationEdit ? (
+        <div style={{ background: "#eff6ff", borderBottom: "1px solid #bfdbfe", padding: "12px 40px", color: "#174f82", fontSize: "0.86rem", fontWeight: 700 }}>
+          Integrazione richiesta - Correggi la sezione Certificazioni, salva e invia la risposta.
+        </div>
+      ) : (
+        <StepBar active={3} />
+      )}
 
       <div style={{ maxWidth: 1040, margin: "28px auto", padding: "0 24px 120px" }}>
         <div style={{ background: "#fff", borderRadius: 10, border: "1px solid #e5e7eb", padding: "28px 32px" }}>
@@ -297,6 +475,7 @@ export function RevampAlboBStep4CertificazioniPage() {
             const certErr = errors[`cert_${c.key}`];
             const enteErr = errors[`cert_${c.key}_ente`];
             const scadErr = errors[`cert_${c.key}_scad`];
+            const fileErr = errors[`cert_${c.key}_file`];
             return (
               <div key={c.key} style={{ border: `1px solid ${rec.presente === "si" ? GREEN + "60" : "#e5e7eb"}`, borderRadius: 8, padding: "16px 20px", marginBottom: 12 }}>
                 <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16 }}>
@@ -327,7 +506,10 @@ export function RevampAlboBStep4CertificazioniPage() {
                       <input value={rec.scadenza} onChange={e => updateCert(c.key, "scadenza", e.target.value)} placeholder="MM/AAAA" style={baseInput(!!scadErr)} />
                       {scadErr ? <span style={errTxt}>{scadErr}</span> : null}
                     </div>
-                    <FileInput label="Certificato PDF" fileName={rec.fileName} onChange={e => { const f = e.target.files?.[0]; if (f) updateCert(c.key, "fileName", f.name); }} hintText="PDF max 5 MB" />
+                    <div style={col}>
+                      <FileInput label="Certificato PDF" fileName={rec.fileName} onChange={handleCertificationFile(c.key)} uploading={uploadingField === `CERTIFICATION:${c.key}`} hintText="PDF max 5 MB" />
+                      {fileErr ? <span style={errTxt}>{fileErr}</span> : null}
+                    </div>
                   </div>
                 ) : null}
               </div>
@@ -395,19 +577,27 @@ export function RevampAlboBStep4CertificazioniPage() {
           <div style={{ background: "#fffbeb", border: "1px solid #f59e0b", borderRadius: 6, padding: "10px 14px", marginBottom: 16, fontSize: "0.82rem", color: "#92400e" }}>
             ⚠ La visura camerale e il DURC sono obbligatori. Il company profile è consigliato.
           </div>
+          {uploadError ? (
+            <div style={{ background: "#fff5f5", border: "1px solid #fca5a5", borderRadius: 6, padding: "10px 14px", marginBottom: 16, fontSize: "0.82rem", color: "#b91c1c" }}>
+              {uploadError}
+            </div>
+          ) : null}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
             <div style={col}>
-              <FileInput label="Visura camerale ordinaria" required fileName={visura} onChange={handleFile(setVisura)} hintText="PDF max 5 MB" tooltip="emissione non anteriore a 6 mesi" />
+              <FileInput label="Visura camerale ordinaria" required fileName={visura} onChange={handleFile("VISURA_CAMERALE", setVisura, setVisuraAttachment, 5)} uploading={uploadingField === "VISURA_CAMERALE"} hintText="PDF max 5 MB" tooltip="emissione non anteriore a 6 mesi" />
               {errors.visura ? <span style={errTxt}>{errors.visura}</span> : null}
             </div>
-            <FileInput label="Company profile / presentazione aziendale" fileName={companyProf} onChange={handleFile(setCompanyProf)} hintText="PDF max 10 MB — consigliato" />
+            <FileInput label="Company profile / presentazione aziendale" fileName={companyProf} onChange={handleFile("COMPANY_PROFILE", setCompanyProf, setCompanyProfAttachment, 10)} uploading={uploadingField === "COMPANY_PROFILE"} hintText="PDF max 10 MB — consigliato" />
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
             <div style={col}>
-              <FileInput label="DURC — Documento Unico Regolarità Contributiva" required fileName={durc} onChange={handleFile(setDurc)} hintText="PDF max 5 MB" tooltip="validità 120 giorni" />
+              <FileInput label="DURC — Documento Unico Regolarità Contributiva" required fileName={durc} onChange={handleFile("DURC", setDurc, setDurcAttachment, 5)} uploading={uploadingField === "DURC"} hintText="PDF max 5 MB" tooltip="validità 120 giorni" />
               {errors.durc ? <span style={errTxt}>{errors.durc}</span> : null}
             </div>
-            <FileInput label="Certificati ISO e accreditamenti" fileName={certAlleg} onChange={handleFile(setCertAlleg)} hintText="PDF — un file per certificato (o archivio ZIP)" />
+            <div style={col}>
+              <FileInput label="Certificati ISO e accreditamenti" fileName={certAlleg} onChange={handleFile("CERTIFICATION", setCertAlleg, setCertAllegAttachment, 10)} uploading={uploadingField === "CERTIFICATION"} hintText="PDF — un file per certificato (o archivio ZIP)" />
+              {errors.certAlleg ? <span style={errTxt}>{errors.certAlleg}</span> : null}
+            </div>
           </div>
 
           {/* Error summary */}
@@ -420,18 +610,22 @@ export function RevampAlboBStep4CertificazioniPage() {
       </div>
 
       {/* Bottom nav */}
-      <div style={{ background: "#fff", borderTop: "1px solid #e5e7eb", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 40px", position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 10 }}>
-        <Link to="/apply/albo-b/step/3" style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 20px", background: "#fff", border: `1.5px solid ${GREEN}`, borderRadius: 6, fontWeight: 600, fontSize: "0.85rem", color: GREEN, textDecoration: "none" }}>
-          <ArrowLeft size={15} /> Sezione precedente
+      <div className="wizard-bottom-nav" style={{ background: "#fff", borderTop: "1px solid #e5e7eb", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 40px", position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 10 }}>
+        <Link className="wizard-nav-button wizard-nav-button-prev" to={integrationEdit?.returnPath ?? "/apply/albo-b/step/3"} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 20px", background: "#fff", border: `1.5px solid ${GREEN}`, borderRadius: 6, fontWeight: 600, fontSize: "0.85rem", color: GREEN, textDecoration: "none" }}>
+          <ArrowLeft size={15} /> {integrationEdit ? "Torna alla richiesta" : "Sezione precedente"}
         </Link>
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
-          <span style={{ fontSize: "0.78rem", color: MUTED }}>Avanzamento: <strong>80%</strong></span>
-          <div style={{ width: 200, height: 4, background: "#e5e7eb", borderRadius: 2, overflow: "hidden" }}>
-            <div style={{ width: "80%", height: "100%", background: GREEN, borderRadius: 2 }} />
+        {integrationEdit ? (
+          <div style={{ fontSize: "0.82rem", color: MUTED, fontWeight: 700 }}>Modalita integrazione</div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+            <span style={{ fontSize: "0.78rem", color: MUTED }}>Avanzamento: <strong>80%</strong></span>
+            <div style={{ width: 200, height: 4, background: "#e5e7eb", borderRadius: 2, overflow: "hidden" }}>
+              <div style={{ width: "80%", height: "100%", background: GREEN, borderRadius: 2 }} />
+            </div>
           </div>
-        </div>
-        <button type="button" onClick={() => void handleNext()} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 20px", background: GREEN, color: "#fff", border: "none", borderRadius: 6, fontWeight: 600, fontSize: "0.85rem", cursor: "pointer" }}>
-          Sezione successiva <ArrowRight size={15} />
+        )}
+        <button className="wizard-nav-button wizard-nav-button-next" type="button" onClick={() => void handleNext()} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 20px", background: GREEN, color: "#fff", border: "none", borderRadius: 6, fontWeight: 600, fontSize: "0.85rem", cursor: "pointer" }}>
+          {integrationEdit ? "Salva e invia integrazione" : "Sezione successiva"} <ArrowRight size={15} />
         </button>
       </div>
     </div>

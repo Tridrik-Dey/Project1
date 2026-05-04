@@ -1,6 +1,6 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { Lock, LogIn, Mail } from "lucide-react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { login } from "../../api/authApi";
 import { getMyLatestRevampApplication } from "../../api/revampApplicationApi";
 import { HttpError } from "../../api/http";
@@ -8,7 +8,6 @@ import { useAuth } from "../../auth/AuthContext";
 import { AppToast } from "../../components/ui/toast";
 import { featureFlags } from "../../config/featureFlags";
 import { useI18n } from "../../i18n/I18nContext";
-import { isRevampEmailVerified, markRevampEmailVerified } from "../../utils/revampEmailVerification";
 
 function isSentApplication(status?: string | null): boolean {
   return Boolean(status && status !== "DRAFT");
@@ -16,12 +15,21 @@ function isSentApplication(status?: string | null): boolean {
 
 export function LoginPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { loginFromResponse } = useAuth();
   const { t } = useI18n();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [toast, setToast] = useState<{ message: string; type: "error" | "success" } | null>(null);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const state = location.state as { successMessage?: string } | null;
+    if (state?.successMessage) {
+      setToast({ message: state.successMessage, type: "success" });
+      navigate(location.pathname, { replace: true, state: {} });
+    }
+  }, []);
 
   function pushToast(message: string, type: "error" | "success" = "error") {
     setToast({ message, type });
@@ -55,8 +63,7 @@ export function LoginPage() {
         } catch {
           // fall through
         }
-        if (!isRevampEmailVerified()) {
-          markRevampEmailVerified(false);
+        if (!response.emailVerified) {
           navigate("/verify-otp");
           return;
         }
@@ -186,6 +193,17 @@ export function LoginPage() {
               />
               <span className="floating-field-label">{t("auth.password")}</span>
             </label>
+
+            <div style={{ textAlign: "right", marginTop: -8 }}>
+              <Link
+                to="/forgot-password"
+                style={{ fontSize: "0.8rem", color: "#1b5d96", fontWeight: 500, textDecoration: "none" }}
+                onMouseEnter={(e) => (e.currentTarget.style.textDecoration = "underline")}
+                onMouseLeave={(e) => (e.currentTarget.style.textDecoration = "none")}
+              >
+                {t("auth.forgotPassword")}
+              </Link>
+            </div>
 
             <button
               className={`auth-submit-btn ${loading ? "is-loading" : ""}`}

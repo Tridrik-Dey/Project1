@@ -7,6 +7,8 @@ import com.supplierplatform.auth.dto.LoginRequest;
 import com.supplierplatform.auth.dto.RegisterRequest;
 import com.supplierplatform.common.ApiResponse;
 import com.supplierplatform.config.RevampAccessGuard;
+import com.supplierplatform.revamp.api.dto.ForgotPasswordRequestDto;
+import com.supplierplatform.revamp.api.dto.ForgotPasswordResetDto;
 import com.supplierplatform.revamp.api.dto.VerifyOtpChallengeRequest;
 import com.supplierplatform.revamp.dto.OtpChallengeDispatchDto;
 import com.supplierplatform.revamp.dto.OtpChallengeVerifyDto;
@@ -67,6 +69,20 @@ public class RevampAuthController {
         User currentUser = getCurrentUser();
         OtpChallengeVerifyDto dto = otpChallengeService.verifyEmailChallenge(request.getChallengeId(), request.getOtpCode(), currentUser);
         return ResponseEntity.ok(ApiResponse.ok("Email OTP challenge verified", dto));
+    }
+
+    @PostMapping("/forgot-password/request")
+    public ResponseEntity<ApiResponse<OtpChallengeDispatchDto>> forgotPasswordRequest(
+            @Valid @RequestBody ForgotPasswordRequestDto request) {
+        OtpChallengeDispatchDto dto = otpChallengeService.dispatchPasswordResetOtp(request.getEmail());
+        return ResponseEntity.ok(ApiResponse.ok("If the email exists, an OTP has been sent", dto));
+    }
+
+    @PostMapping("/forgot-password/reset")
+    public ResponseEntity<ApiResponse<Void>> forgotPasswordReset(
+            @Valid @RequestBody ForgotPasswordResetDto request) {
+        otpChallengeService.verifyPasswordResetChallenge(request.getChallengeId(), request.getOtpCode(), request.getNewPassword());
+        return ResponseEntity.ok(ApiResponse.ok("Password reset successful", null));
     }
 
     private User getCurrentUser() {

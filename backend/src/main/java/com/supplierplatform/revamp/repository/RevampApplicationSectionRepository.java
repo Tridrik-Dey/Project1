@@ -11,4 +11,5 @@ public interface RevampApplicationSectionRepository extends JpaRepository<Revamp
     List<RevampApplicationSection> findByApplicationIdAndIsLatestTrue(UUID applicationId);
     Optional<RevampApplicationSection> findByApplicationIdAndSectionKeyAndIsLatestTrue(UUID applicationId, String sectionKey);
     Optional<RevampApplicationSection> findTopByApplicationIdAndSectionKeyOrderBySectionVersionDesc(UUID applicationId, String sectionKey);
+    void deleteByApplicationId(UUID applicationId);
 }

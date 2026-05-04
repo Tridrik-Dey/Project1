@@ -21,6 +21,7 @@ export interface AuthResponse {
   fullName: string;
   role: "SUPPLIER" | "ADMIN";
   adminGovernanceRole?: string;
+  emailVerified: boolean;
 }
 
 export interface AdminUserInviteResponse {

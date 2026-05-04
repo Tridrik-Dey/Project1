@@ -209,6 +209,15 @@ public class GlobalExceptionHandler {
         if (normalized.contains("supplier_profiles_vat_number_key") || normalized.contains("key (vat_number)")) {
             return "DUPLICATE_VAT_NUMBER";
         }
+        if (normalized.contains("uk_applications_active_identity")) {
+            if (normalized.contains("tax_code")) {
+                return "validation.duplicate.taxId";
+            }
+            if (normalized.contains("vat_number")) {
+                return "validation.duplicate.vatNumber";
+            }
+            return "validation.duplicate.generic";
+        }
         if (normalized.contains("supplier_profiles_tax_id_key") || normalized.contains("key (tax_id)")) {
             return "DUPLICATE_TAX_ID";
         }

@@ -126,22 +126,36 @@ public class RevampReportService {
                     """);
         }
 
-        int targetYear = filters != null && filters.year() != null ? filters.year() : LocalDate.now().getYear();
-        long newRegistrationsYtd = count("""
-                SELECT COUNT(*)
-                FROM applications
-                WHERE submitted_at IS NOT NULL
-                  AND EXTRACT(YEAR FROM submitted_at) = ?
-                """, targetYear);
+        Integer targetYear = filters != null ? filters.year() : null;
+        long newRegistrationsYtd = targetYear != null
+                ? count("""
+                    SELECT COUNT(*)
+                    FROM applications
+                    WHERE submitted_at IS NOT NULL
+                      AND EXTRACT(YEAR FROM submitted_at) = ?
+                    """, targetYear)
+                : count("""
+                    SELECT COUNT(*)
+                    FROM applications
+                    WHERE submitted_at IS NOT NULL
+                    """);
 
-        long evaluationsYtd = count("""
-                SELECT COUNT(*)
-                FROM evaluations e
-                JOIN supplier_registry_profiles p ON p.id = e.supplier_registry_profile_id
-                LEFT JOIN supplier_registry_profile_details d ON d.profile_id = p.id
-                WHERE COALESCE(is_annulled, false) = false
-                  AND EXTRACT(YEAR FROM e.created_at) = ?
-                """ + profileFilterTail(filters, "p", "d"), targetYear);
+        long evaluationsYtd = targetYear != null
+                ? count("""
+                    SELECT COUNT(*)
+                    FROM evaluations e
+                    JOIN supplier_registry_profiles p ON p.id = e.supplier_registry_profile_id
+                    LEFT JOIN supplier_registry_profile_details d ON d.profile_id = p.id
+                    WHERE COALESCE(is_annulled, false) = false
+                      AND EXTRACT(YEAR FROM e.created_at) = ?
+                    """ + profileFilterTail(filters, "p", "d"), targetYear)
+                : count("""
+                    SELECT COUNT(*)
+                    FROM evaluations e
+                    JOIN supplier_registry_profiles p ON p.id = e.supplier_registry_profile_id
+                    LEFT JOIN supplier_registry_profile_details d ON d.profile_id = p.id
+                    WHERE COALESCE(is_annulled, false) = false
+                    """ + profileFilterTail(filters, "p", "d"));
 
         long approvedApplications = count("SELECT COUNT(*) FROM applications WHERE status = 'APPROVED'");
         long rejectedApplications = count("SELECT COUNT(*) FROM applications WHERE status = 'REJECTED'");
@@ -169,14 +183,39 @@ public class RevampReportService {
     }
 
     private List<RevampReportAnalyticsDto.MonthlyPointDto> buildMonthlyPoints(RevampReportFilterParams filters) {
-        int targetYear = filters != null && filters.year() != null ? filters.year() : LocalDate.now().getYear();
+        Integer targetYear = filters != null ? filters.year() : null;
         String registryTypeClause = (filters != null && filters.registryType() != null && !filters.registryType().isBlank())
                 ? " AND registry_type = ? "
                 : "";
         List<Object> args = new ArrayList<>();
-        args.add(targetYear);
+        if (targetYear != null) {
+            args.add(targetYear);
+        }
         if (!registryTypeClause.isBlank()) {
             args.add(filters.registryType().trim().toUpperCase());
+        }
+        if (targetYear == null) {
+            List<Map<String, Object>> rows = jdbcTemplate.queryForList("""
+                    SELECT
+                        EXTRACT(YEAR FROM submitted_at)::int AS y,
+                        SUM(CASE WHEN registry_type = 'ALBO_A' THEN 1 ELSE 0 END)::bigint AS albo_a,
+                        SUM(CASE WHEN registry_type = 'ALBO_B' THEN 1 ELSE 0 END)::bigint AS albo_b
+                    FROM applications
+                    WHERE submitted_at IS NOT NULL
+                    """ + registryTypeClause + """
+                    GROUP BY EXTRACT(YEAR FROM submitted_at)
+                    ORDER BY y
+                    """, args.toArray());
+
+            List<RevampReportAnalyticsDto.MonthlyPointDto> out = new ArrayList<>();
+            for (Map<String, Object> row : rows) {
+                out.add(new RevampReportAnalyticsDto.MonthlyPointDto(
+                        String.valueOf(number(row.get("y")).intValue()),
+                        number(row.get("albo_a")).longValue(),
+                        number(row.get("albo_b")).longValue()
+                ));
+            }
+            return out;
         }
         List<Map<String, Object>> rows = jdbcTemplate.queryForList("""
                 SELECT

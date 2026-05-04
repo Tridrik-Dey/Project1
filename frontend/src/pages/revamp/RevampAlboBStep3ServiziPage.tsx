@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import { ArrowLeft, ArrowRight, Save } from "lucide-react";
+import { ArrowLeft, ArrowRight, CheckCircle, Save } from "lucide-react";
 import { useAuth } from "../../auth/AuthContext";
-import { getMyLatestRevampApplication, getRevampApplicationSections, saveRevampApplicationSection } from "../../api/revampApplicationApi";
+import { answerRevampIntegrationRequest, getMyLatestRevampApplication, getRevampApplicationSections, saveRevampApplicationSection } from "../../api/revampApplicationApi";
+import { loadRevampApplicationIdForRegistry, saveRevampApplicationIdForRegistry } from "../../utils/revampApplicationSession";
+import { clearRevampIntegrationEditSession, isRevampIntegrationEditFor } from "../../utils/revampIntegrationEditSession";
 
 const GREEN = "#1a5c3a";
 const MUTED = "#6b7280";
@@ -106,6 +108,7 @@ function StepBar({ active }: { active: number }) {
 export function RevampAlboBStep3ServiziPage() {
   const navigate = useNavigate();
   const { auth } = useAuth();
+  const integrationEdit = isRevampIntegrationEditFor("ALBO_B", 3);
 
   const [vociSelezionate, setVociSelezionate] = useState<Record<CatKey, Set<string>>>({
     A: new Set(), B: new Set(), C: new Set(), D: new Set(), E: new Set(),
@@ -143,7 +146,7 @@ export function RevampAlboBStep3ServiziPage() {
       });
     }
 
-    const existingAppId = sessionStorage.getItem("revamp_applicationId");
+    const existingAppId = loadRevampApplicationIdForRegistry("ALBO_B");
     if (existingAppId) {
       getRevampApplicationSections(existingAppId, auth.token).then(applyS3).catch(() => {});
       return;
@@ -151,7 +154,7 @@ export function RevampAlboBStep3ServiziPage() {
 
     getMyLatestRevampApplication(auth.token).then(app => {
       if (!app || app.status !== "DRAFT" || app.registryType !== "ALBO_B") return;
-      sessionStorage.setItem("revamp_applicationId", app.id);
+      saveRevampApplicationIdForRegistry("ALBO_B", app.id);
       return getRevampApplicationSections(app.id, auth!.token!).then(applyS3);
     }).catch(() => {});
   }, [auth?.token]);
@@ -192,7 +195,7 @@ export function RevampAlboBStep3ServiziPage() {
   async function handleSaveDraft() {
     if (!auth?.token) return;
     try {
-      const appId = sessionStorage.getItem("revamp_applicationId");
+      const appId = loadRevampApplicationIdForRegistry("ALBO_B");
       if (!appId) return;
       const categorieData = Object.fromEntries(
         CATEGORIE.map(c => [c.key, { voci: Array.from(vociSelezionate[c.key]), descrizione: descrizioni[c.key] }])
@@ -212,10 +215,12 @@ export function RevampAlboBStep3ServiziPage() {
     );
     const payload = { categorie: categorieData };
     sessionStorage.setItem("revamp_b3", JSON.stringify(payload));
+    let savedAppId: string | null = null;
     if (auth?.token) {
       try {
-        const appId = sessionStorage.getItem("revamp_applicationId");
+        const appId = loadRevampApplicationIdForRegistry("ALBO_B");
         if (appId) {
+          savedAppId = appId;
           /* Map frontend category keys (A,B,C,D,E) → backend (CAT_A,CAT_B,...) */
           const servicesByCategory: Record<string, string[]> = {};
           const descriptionsByCategory: Record<string, string> = {};
@@ -235,7 +240,16 @@ export function RevampAlboBStep3ServiziPage() {
         return;
       }
     }
-    navigate("/apply/albo-b/step/4");
+    if (integrationEdit && auth?.token && savedAppId) {
+      try {
+        await answerRevampIntegrationRequest(savedAppId, auth.token);
+        clearRevampIntegrationEditSession();
+      } catch {
+        window.alert("Invio integrazione non riuscito. Controlla i dati e riprova.");
+        return;
+      }
+    }
+    navigate(integrationEdit?.returnPath ?? "/apply/albo-b/step/4");
   }
 
   const errors = triedSubmit ? validate() : {};
@@ -254,12 +268,18 @@ export function RevampAlboBStep3ServiziPage() {
           <div style={{ fontWeight: 700, fontSize: "1rem", color: "#1e293b" }}>Albo B — Aziende</div>
           <div style={{ fontSize: "0.75rem", color: MUTED }}>Questionario di iscrizione</div>
         </div>
-        <button type="button" onClick={() => void handleSaveDraft()} style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 16px", background: "#fff", border: "1.5px solid #d1d5db", borderRadius: 6, fontWeight: 600, fontSize: "0.82rem", cursor: "pointer", color: "#374151" }}>
-          <Save size={14} /> {savedAt ? `Bozza salvata ${savedAt}` : "Salva bozza"}
+        <button type="button" className={`wizard-save-button${savedAt ? " is-saved" : ""}`} onClick={() => void handleSaveDraft()} style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 16px", background: "#fff", border: "1.5px solid #d1d5db", borderRadius: 6, fontWeight: 600, fontSize: "0.82rem", cursor: "pointer", color: "#374151" }}>
+          {savedAt ? <CheckCircle size={14} /> : <Save size={14} />} {savedAt ? `Bozza salvata ${savedAt}` : "Salva bozza"}
         </button>
       </div>
 
-      <StepBar active={2} />
+      {integrationEdit ? (
+        <div style={{ background: "#eff6ff", borderBottom: "1px solid #bfdbfe", padding: "12px 40px", color: "#174f82", fontSize: "0.86rem", fontWeight: 700 }}>
+          Integrazione richiesta - Correggi questa sezione, salva e invia la risposta.
+        </div>
+      ) : (
+        <StepBar active={2} />
+      )}
 
       <div style={{ maxWidth: 1040, margin: "28px auto", padding: "0 24px 120px" }}>
         <div style={{ background: "#fff", borderRadius: 10, border: "1px solid #e5e7eb", padding: "28px 32px", marginBottom: 20 }}>
@@ -333,18 +353,22 @@ export function RevampAlboBStep3ServiziPage() {
       </div>
 
       {/* Bottom nav */}
-      <div style={{ background: "#fff", borderTop: "1px solid #e5e7eb", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 40px", position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 10 }}>
-        <Link to="/apply/albo-b/step/2" style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 20px", background: "#fff", border: `1.5px solid ${GREEN}`, borderRadius: 6, fontWeight: 600, fontSize: "0.85rem", color: GREEN, textDecoration: "none" }}>
-          <ArrowLeft size={15} /> Sezione precedente
+      <div className="wizard-bottom-nav" style={{ background: "#fff", borderTop: "1px solid #e5e7eb", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 40px", position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 10 }}>
+        <Link className="wizard-nav-button wizard-nav-button-prev" to={integrationEdit?.returnPath ?? "/apply/albo-b/step/2"} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 20px", background: "#fff", border: `1.5px solid ${GREEN}`, borderRadius: 6, fontWeight: 600, fontSize: "0.85rem", color: GREEN, textDecoration: "none" }}>
+          <ArrowLeft size={15} /> {integrationEdit ? "Torna alla richiesta" : "Sezione precedente"}
         </Link>
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
-          <span style={{ fontSize: "0.78rem", color: MUTED }}>Avanzamento: <strong>60%</strong></span>
-          <div style={{ width: 200, height: 4, background: "#e5e7eb", borderRadius: 2, overflow: "hidden" }}>
-            <div style={{ width: "60%", height: "100%", background: GREEN, borderRadius: 2 }} />
+        {integrationEdit ? (
+          <div style={{ fontSize: "0.82rem", color: MUTED, fontWeight: 700 }}>Modalita integrazione</div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+            <span style={{ fontSize: "0.78rem", color: MUTED }}>Avanzamento: <strong>60%</strong></span>
+            <div style={{ width: 200, height: 4, background: "#e5e7eb", borderRadius: 2, overflow: "hidden" }}>
+              <div style={{ width: "60%", height: "100%", background: GREEN, borderRadius: 2 }} />
+            </div>
           </div>
-        </div>
-        <button type="button" onClick={() => void handleNext()} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 20px", background: GREEN, color: "#fff", border: "none", borderRadius: 6, fontWeight: 600, fontSize: "0.85rem", cursor: "pointer" }}>
-          Sezione successiva <ArrowRight size={15} />
+        )}
+        <button className="wizard-nav-button wizard-nav-button-next" type="button" onClick={() => void handleNext()} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 20px", background: GREEN, color: "#fff", border: "none", borderRadius: 6, fontWeight: 600, fontSize: "0.85rem", cursor: "pointer" }}>
+          {integrationEdit ? "Salva e invia integrazione" : "Sezione successiva"} <ArrowRight size={15} />
         </button>
       </div>
     </div>

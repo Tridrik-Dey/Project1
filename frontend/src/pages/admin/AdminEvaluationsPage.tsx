@@ -286,11 +286,11 @@ export function AdminEvaluationsPage({ mode }: AdminEvaluationsPageProps) {
     && selectedAssignment.assignmentId
     && selectedAssignment.status !== "COMPLETATA"
     && selectedAssignment.status !== "SCADUTA"
-    && (isAssignedToMe || adminRole === "SUPER_ADMIN")
+    && isAssignedToMe
   );
   const canSubmitSelectedDraft = Boolean(
     selectedAssignment?.assignmentId
-    && (isAssignedToMe || adminRole === "SUPER_ADMIN")
+    && isAssignedToMe
     && selectedAssignment.status !== "COMPLETATA"
     && selectedAssignment.status !== "SCADUTA"
   );
@@ -1144,8 +1144,8 @@ export function AdminEvaluationsPage({ mode }: AdminEvaluationsPageProps) {
                             <Check className="h-4 w-4" /> Completa valutazione
                           </button>
                         </div>
-                        {!isAssignedToMe && adminRole !== "SUPER_ADMIN" && selectedAssignment.status !== "COMPLETATA" ? (
-                          <p className="subtle">Solo il valutatore assegnato puo completare la valutazione. Super Admin e Responsabile possono gestire l'assegnazione.</p>
+                        {!isAssignedToMe && selectedAssignment.status !== "COMPLETATA" ? (
+                          <p className="subtle">Solo il valutatore assegnato puo modificare e completare la valutazione. Super Admin e Responsabile possono gestire l'assegnazione.</p>
                         ) : null}
                       </>
                     ) : null}

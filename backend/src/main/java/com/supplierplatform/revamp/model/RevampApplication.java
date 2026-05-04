@@ -51,6 +51,12 @@ public class RevampApplication {
     @Column(name = "protocol_code", unique = true)
     private String protocolCode;
 
+    @Column(name = "identity_key_type", length = 32)
+    private String identityKeyType;
+
+    @Column(name = "identity_value_normalized", length = 128)
+    private String identityValueNormalized;
+
     @Column(name = "current_revision", nullable = false)
     private Integer currentRevision = 1;
 

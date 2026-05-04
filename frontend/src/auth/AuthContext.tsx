@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import type { AuthResponse } from "../types/api";
 import { clearAuthState, loadAuthState, saveAuthState, type AuthState } from "../utils/storage";
 import { clearRevampEmailVerified } from "../utils/revampEmailVerification";
+import { clearRevampWizardSession } from "../utils/revampApplicationSession";
 
 interface AuthContextValue {
   auth: AuthState | null;
@@ -20,6 +21,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setAuth(null);
     clearAuthState();
     clearRevampEmailVerified();
+    clearRevampWizardSession();
+    sessionStorage.removeItem("supplier_identity_preview");
+    window.dispatchEvent(new CustomEvent("supplier:identity-preview", { detail: null }));
   }, []);
 
   useEffect(() => {
@@ -37,8 +41,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         email: response.email,
         fullName: response.fullName,
         role: response.role,
-        adminGovernanceRole: response.adminGovernanceRole
+        adminGovernanceRole: response.adminGovernanceRole,
+        emailVerified: response.emailVerified,
       };
+      clearRevampWizardSession();
+      sessionStorage.removeItem("supplier_identity_preview");
+      window.dispatchEvent(new CustomEvent("supplier:identity-preview", { detail: null }));
       setAuth(next);
       saveAuthState(next);
     },

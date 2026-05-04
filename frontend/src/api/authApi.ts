@@ -44,3 +44,17 @@ export function verifyEmailOtpChallenge(
     body: JSON.stringify({ challengeId, otpCode })
   }, token);
 }
+
+export function requestPasswordReset(email: string): Promise<OtpChallengeDispatchResponse> {
+  return apiRequest<OtpChallengeDispatchResponse>("/api/v2/auth/forgot-password/request", {
+    method: "POST",
+    body: JSON.stringify({ email })
+  });
+}
+
+export function resetPassword(challengeId: string, otpCode: string, newPassword: string): Promise<null> {
+  return apiRequest<null>("/api/v2/auth/forgot-password/reset", {
+    method: "POST",
+    body: JSON.stringify({ challengeId, otpCode, newPassword })
+  });
+}

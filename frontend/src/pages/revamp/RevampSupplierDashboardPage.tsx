@@ -1,18 +1,22 @@
 import { useEffect, useState } from "react";
-import { Navigate, useParams } from "react-router-dom";
-import { ChevronDown, ChevronUp, Download, FileText, Globe, Handshake, LayoutGrid, MapPin, MessageSquare, Star, User, X } from "lucide-react";
+import { Link, Navigate, useParams } from "react-router-dom";
+import { ChevronDown, ChevronUp, Download, FileText, Globe, Handshake, Image, LayoutGrid, MapPin, MessageSquare, Star, User, X } from "lucide-react";
 import { useAuth } from "../../auth/AuthContext";
 import { API_BASE_URL } from "../../api/http";
 import {
   getMyLatestRevampApplication,
   getRevampApplicationSections,
   getRevampApplicationCommunications,
+  getOpenRevampIntegrationRequest,
   getMyEvaluationAggregate,
   type RevampApplicationSummary,
   type RevampSectionSnapshot,
   type RevampApplicationCommunication,
+  type RevampIntegrationRequestSummary,
   type MyEvaluationAggregate,
 } from "../../api/revampApplicationApi";
+import { saveRevampApplicationIdForRegistry } from "../../utils/revampApplicationSession";
+import { saveRevampIntegrationEditSession } from "../../utils/revampIntegrationEditSession";
 
 const NAVY  = "#0f2a52";
 const GREEN = "#1a5c3a";
@@ -105,11 +109,86 @@ const STATUS_CFG: Record<string, { label: string; icon: string; bg: string; bord
   REJECTED:     { label: "Non approvata",         icon: "✕", bg: "#fef2f2", border: "#fecaca", color: "#dc2626", sub: "La candidatura non è stata approvata. Contatta il team Solco per maggiori informazioni." },
 };
 
+STATUS_CFG.INTEGRATION_REQUIRED = {
+  label: "Richiesta integrazione inviata",
+  icon: "!",
+  bg: "#fff7ed",
+  border: "#fdba74",
+  color: "#9a3412",
+  sub: "Il Gruppo Solco richiede alcune integrazioni prima di completare la verifica."
+};
+STATUS_CFG.WAITING_SUPPLIER_RESPONSE = STATUS_CFG.INTEGRATION_REQUIRED;
+
 type Tab = "profilo" | "documenti" | "valutazioni" | "comunicazioni";
+type RequestedItem = {
+  code: string;
+  label: string;
+  instruction: string;
+  documentType?: string;
+  certificationKey?: string;
+  certificationLabel?: string;
+  targetStep?: number;
+};
 
 /* ─── module-level helpers ──────────────────────────── */
 function parseSection(sections: Record<string, RevampSectionSnapshot>, key: string): Record<string, unknown> {
   return sections[key] ? (JSON.parse(sections[key].payloadJson) as Record<string, unknown>) : {};
+}
+
+function parseRequestedItems(payload: unknown): RequestedItem[] {
+  if (!payload || typeof payload !== "object") return [];
+  const rawItems = Array.isArray((payload as { items?: unknown }).items)
+    ? (payload as { items: unknown[] }).items
+    : [];
+  return rawItems
+    .map((item) => {
+      if (!item || typeof item !== "object") return null;
+      const value = item as Record<string, unknown>;
+      const parsed: RequestedItem = {
+        code: typeof value.code === "string" ? value.code : "OTHER",
+        label: typeof value.label === "string" ? value.label : "Elemento richiesto",
+        instruction: typeof value.instruction === "string" ? value.instruction : ""
+      };
+      if (typeof value.documentType === "string") parsed.documentType = value.documentType;
+      if (typeof value.certificationKey === "string") parsed.certificationKey = value.certificationKey;
+      if (typeof value.certificationLabel === "string") parsed.certificationLabel = value.certificationLabel;
+      if (typeof value.targetStep === "number") parsed.targetStep = value.targetStep;
+      return parsed;
+    })
+    .filter((item): item is RequestedItem => Boolean(item));
+}
+
+function targetStepForItem(item: RequestedItem): number {
+  if (item.targetStep && item.targetStep >= 1 && item.targetStep <= 5) return item.targetStep;
+  if (item.code === "THEMATIC_SPECIFICATION" || item.code === "EXPERIENCE_CONSISTENCY") return 3;
+  if (item.documentType || item.code === "CV" || item.code === "PROFESSIONAL_REGISTER" || item.code.startsWith("CERT_")) return 4;
+  return 1;
+}
+
+function wizardStepPath(registryParam: string, step: number): string {
+  const normalizedStep = Math.max(1, Math.min(step, 5));
+  return normalizedStep <= 1 ? `/apply/${registryParam}` : `/apply/${registryParam}/step/${normalizedStep}`;
+}
+
+function sectionNameForStep(registryType: string, step: number): string {
+  if (registryType === "ALBO_B") {
+    const names: Record<number, string> = {
+      1: "Dati aziendali",
+      2: "Struttura",
+      3: "Servizi",
+      4: "Certificazioni",
+      5: "Dichiarazioni"
+    };
+    return names[step] ?? `Sezione ${step}`;
+  }
+  const names: Record<number, string> = {
+    1: "Anagrafica",
+    2: "Tipologia",
+    3: "Competenze",
+    4: "Disponibilita",
+    5: "Dichiarazioni"
+  };
+  return names[step] ?? `Sezione ${step}`;
 }
 
 function s(val: unknown): string {
@@ -184,7 +263,7 @@ function InfoRow({ icon, label, value }: { icon: React.ReactNode; label: string;
 function DataRow({ label, value }: { label: string; value?: string | null }) {
   if (!value || !value.trim()) return null;
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "160px 1fr", gap: 8, padding: "5px 0", borderBottom: "1px solid #f8fafc", fontSize: "0.82rem" }}>
+    <div className="supplier-profile-data-row">
       <span style={{ color: MUTED, fontWeight: 500, flexShrink: 0 }}>{label}</span>
       <span style={{ color: "#1e293b" }}>{value}</span>
     </div>
@@ -193,7 +272,7 @@ function DataRow({ label, value }: { label: string; value?: string | null }) {
 
 function SubHead({ title }: { title: string }) {
   return (
-    <div style={{ fontSize: "0.68rem", fontWeight: 700, color: "#9ca3af", textTransform: "uppercase" as const, letterSpacing: "0.07em", margin: "14px 0 4px", paddingBottom: 3, borderBottom: "1px solid #f1f5f9" }}>
+    <div className="supplier-profile-subhead">
       {title}
     </div>
   );
@@ -233,7 +312,7 @@ function SectionCard({ n, title, done, children }: {
       {open && (
         <>
           <div style={{ height: 1, background: "#f1f5f9", margin: "0 16px" }} />
-          <div className="profile-section-body" style={{ padding: "10px 16px 16px", gap: 0 }}>
+          <div className="profile-section-body supplier-dashboard-section-body">
             {children}
           </div>
         </>
@@ -254,6 +333,8 @@ export function RevampSupplierDashboardPage() {
   const [showModal, setShowModal]     = useState(false);
   const [evalAggregate, setEvalAggregate] = useState<MyEvaluationAggregate | null>(null);
   const [communications, setCommunications] = useState<RevampApplicationCommunication[]>([]);
+  const [openIntegrationRequest, setOpenIntegrationRequest] = useState<RevampIntegrationRequestSummary | null>(null);
+  const [integrationDrawerOpen, setIntegrationDrawerOpen] = useState(false);
   const [downloadingKey, setDownloadingKey] = useState<string | null>(null);
   const [showUserMenu, setShowUserMenu] = useState(false);
 
@@ -270,9 +351,10 @@ export function RevampSupplierDashboardPage() {
         const expectedType = isA ? "ALBO_A" : "ALBO_B";
         if (app.registryType !== expectedType) { setLoading(false); return; }
         setApplication(app);
-        const [allSecs, timeline] = await Promise.all([
+        const [allSecs, timeline, integrationRequest] = await Promise.all([
           getRevampApplicationSections(app.id, auth.token!),
-          getRevampApplicationCommunications(app.id, auth.token!).catch(() => [] as RevampApplicationCommunication[])
+          getRevampApplicationCommunications(app.id, auth.token!).catch(() => [] as RevampApplicationCommunication[]),
+          getOpenRevampIntegrationRequest(app.id, auth.token!).catch(() => null)
         ]);
         if (cancelled) return;
         const byKey: Record<string, RevampSectionSnapshot> = {};
@@ -282,6 +364,7 @@ export function RevampSupplierDashboardPage() {
         });
         setSections(byKey);
         setCommunications(timeline);
+        setOpenIntegrationRequest(integrationRequest);
         setLoading(false);
         getMyEvaluationAggregate(auth.token!).then(setEvalAggregate).catch(() => {});
       })
@@ -376,6 +459,14 @@ export function RevampSupplierDashboardPage() {
     ? new Date(application.submittedAt).toLocaleDateString("it-IT") : null;
   const isApproved = status === "APPROVED";
   const isDraft    = status === "DRAFT";
+  const hasOpenIntegration = (status === "INTEGRATION_REQUIRED" || status === "WAITING_SUPPLIER_RESPONSE") && Boolean(openIntegrationRequest);
+  const integrationDueLabel = openIntegrationRequest?.dueAt
+    ? new Date(openIntegrationRequest.dueAt).toLocaleDateString("it-IT")
+    : null;
+  const requestedItems = parseRequestedItems(openIntegrationRequest?.requestedItemsJson);
+  const uploadItems = requestedItems.length > 0
+    ? requestedItems
+    : [{ code: "GENERAL_DOCUMENT", label: "Documento richiesto", instruction: "" }];
   const expiryDate = new Date();
   expiryDate.setFullYear(expiryDate.getFullYear() + 1);
 
@@ -392,6 +483,10 @@ export function RevampSupplierDashboardPage() {
     })),
     { date: new Date().toLocaleDateString("it-IT"), text: `Accesso all'area riservata - ${alboLabel}` }
   ];
+  const openIntegrationRowIndex = hasOpenIntegration
+    ? communicationRows.findIndex(row => row.text.toLowerCase().includes("richiesta integrazione"))
+    : -1;
+  const communicationCount = communicationRows.length;
 
   const tabItems: { id: Tab; label: string }[] = [
     { id: "profilo",       label: "Il mio profilo" },
@@ -447,10 +542,35 @@ export function RevampSupplierDashboardPage() {
     docsList.push({ label: typeLabel, subLabel: "Sezione 4", fileName: att.fileName, storageKey: att.storageKey, mimeType: att.mimeType ?? "application/octet-stream", sizeBytes: att.sizeBytes ?? 0 });
   }
 
+  function openIntegrationDrawer() {
+    if (!hasOpenIntegration) return;
+    setIntegrationDrawerOpen(true);
+  }
+
+  function rememberIntegrationEdit(step: number) {
+    if (!application) return;
+    saveRevampApplicationIdForRegistry(application.registryType, application.id);
+    saveRevampIntegrationEditSession({
+      applicationId: application.id,
+      registryType: application.registryType,
+      targetStep: step,
+      returnPath: `/apply/${registryParam}/my-profile`
+    });
+    setIntegrationDrawerOpen(false);
+  }
+
   function formatDocSize(bytes: number): string {
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  function documentTone(doc: DocEntry): "image" | "pdf" | "file" {
+    const mime = doc.mimeType.toLowerCase();
+    const name = doc.fileName.toLowerCase();
+    if (mime.startsWith("image/")) return "image";
+    if (mime.includes("pdf") || name.endsWith(".pdf")) return "pdf";
+    return "file";
   }
 
   /* ── completed section count ── */
@@ -470,7 +590,7 @@ export function RevampSupplierDashboardPage() {
   }
 
   return (
-    <div style={{ margin: 0, background: "#f8fafc", minHeight: "100vh", fontFamily: "inherit" }}>
+    <div style={{ margin: 0, background: "#f8fafc", minHeight: "100vh", fontFamily: "inherit", display: "flex", flexDirection: "column" }}>
 
       {/* ── Modifica modal ── */}
       {showModal && (
@@ -485,7 +605,7 @@ export function RevampSupplierDashboardPage() {
             {isDraft ? (
               <>
                 <p style={{ fontSize: "0.85rem", color: MUTED, marginBottom: 20, lineHeight: 1.6 }}>
-                  La tua candidatura è ancora in bozza. Puoi tornare al wizard per continuare la compilazione.
+                  La tua candidatura è ancora in bozza. Puoi tornare al modulo per continuare la compilazione.
                 </p>
                 <a
                   href={wizardStart}
@@ -523,6 +643,68 @@ export function RevampSupplierDashboardPage() {
         </div>
       )}
 
+      {integrationDrawerOpen && hasOpenIntegration && application && openIntegrationRequest ? (
+        <div className="supplier-integration-drawer-overlay" onClick={() => setIntegrationDrawerOpen(false)}>
+          <aside className="supplier-integration-drawer" onClick={event => event.stopPropagation()}>
+            <div className="supplier-integration-drawer-head">
+              <div>
+                <span className="supplier-integration-drawer-kicker">Comunicazioni</span>
+                <h2>Rispondi all'integrazione</h2>
+                <p>{integrationDueLabel ? `Scadenza: ${integrationDueLabel}` : "Scadenza non indicata"}</p>
+                <div className="supplier-integration-drawer-intro">
+                  Apri le sezioni indicate, correggi e salva i dati richiesti, poi invia la risposta al Gruppo Solco dalla stessa pagina.
+                </div>
+              </div>
+              <button type="button" className="supplier-integration-drawer-close" onClick={() => setIntegrationDrawerOpen(false)} aria-label="Chiudi">
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="supplier-integration-drawer-body">
+              <section className="supplier-integration-drawer-section">
+                <h3>Messaggio del Gruppo Solco</h3>
+                <p>{openIntegrationRequest.requestMessage || "Completa le informazioni richieste e invia di nuovo la candidatura."}</p>
+              </section>
+
+              <section className="supplier-integration-drawer-section">
+                <h3>Elementi richiesti</h3>
+                <div className="supplier-integration-drawer-items">
+                  {uploadItems.map(item => {
+                    const step = targetStepForItem(item);
+                    const sectionName = sectionNameForStep(application.registryType, step);
+                    return (
+                      <div key={`${item.code}-${item.label}`} className="supplier-integration-drawer-item">
+                        <div className="supplier-integration-drawer-item-main">
+                          <span className="supplier-integration-drawer-item-label">Elemento richiesto</span>
+                          <strong>{item.label}</strong>
+                          <p>{item.instruction || "Aggiorna questa parte della candidatura."}</p>
+                        </div>
+                        <Link
+                          className="supplier-integration-drawer-edit"
+                          to={wizardStepPath(registryParam, step)}
+                          onClick={() => rememberIntegrationEdit(step)}
+                        >
+                          Apri sezione {step} - {sectionName}
+                        </Link>
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+            </div>
+
+            <div className="supplier-integration-drawer-foot">
+              <div className="supplier-integration-drawer-foot-note">
+                Dopo aver salvato le correzioni nella sezione indicata, potrai inviare la risposta da quella pagina.
+              </div>
+              <button type="button" className="supplier-integration-drawer-secondary" onClick={() => setIntegrationDrawerOpen(false)}>
+                Chiudi
+              </button>
+            </div>
+          </aside>
+        </div>
+      ) : null}
+
       {/* ── Top bar ── */}
       <div style={{ background: "linear-gradient(120deg, #0b3f73 0%, #1b5d96 52%, #0c467f 100%)", borderBottom: "1px solid rgba(206,226,248,0.24)", display: "flex", alignItems: "center", padding: "0 32px", minHeight: 64 }}>
         {/* Brand */}
@@ -542,8 +724,11 @@ export function RevampSupplierDashboardPage() {
         <div style={{ display: "flex", gap: 0, marginLeft: 40, height: 64 }}>
           {tabItems.map(t => (
             <button key={t.id} type="button" onClick={() => setActiveTab(t.id)}
-              style={{ padding: "0 20px", height: "100%", background: "none", border: "none", borderBottom: activeTab === t.id ? "2.5px solid #f5c800" : "2.5px solid transparent", fontWeight: activeTab === t.id ? 700 : 500, fontSize: "0.87rem", color: activeTab === t.id ? "#fff" : "rgba(255,255,255,0.65)", cursor: "pointer" }}>
-              {t.label}
+              style={{ padding: "0 20px", height: "100%", background: "none", border: "none", borderBottom: activeTab === t.id ? "2.5px solid #f5c800" : "2.5px solid transparent", fontWeight: activeTab === t.id ? 700 : 500, fontSize: "0.87rem", color: activeTab === t.id ? "#fff" : "rgba(255,255,255,0.65)", cursor: "pointer", position: "relative" }}>
+              <span className="supplier-profile-tab-label">
+                {t.label}
+                {t.id === "comunicazioni" && hasOpenIntegration ? <span className="supplier-profile-nav-badge">1</span> : null}
+              </span>
             </button>
           ))}
         </div>
@@ -609,6 +794,11 @@ export function RevampSupplierDashboardPage() {
         <div style={{ textAlign: "right", fontSize: "0.78rem" }}>
           {proto !== "—" && <div style={{ color: statusCfg.color, fontWeight: 600, marginBottom: 4 }}>Codice: {proto}</div>}
           {submittedAt && <div style={{ color: statusCfg.color, opacity: 0.8 }}>Inviata il: {submittedAt}</div>}
+          {hasOpenIntegration && application && activeTab !== "comunicazioni" ? (
+            <button type="button" className="supplier-status-integration-btn" onClick={openIntegrationDrawer}>
+              Rispondi all'integrazione
+            </button>
+          ) : null}
           {isApproved && (
             <>
               <div style={{ fontWeight: 600, color: "#15803d", marginBottom: 4 }}>
@@ -678,19 +868,19 @@ export function RevampSupplierDashboardPage() {
           <div style={{ display: "grid", gridTemplateColumns: "300px 1fr", gap: 20, alignItems: "start" }}>
 
             {/* ── LEFT: compact identity card ── */}
-            <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 10, padding: "22px 18px", position: "sticky", top: 20 }}>
+            <div className="supplier-identity-card">
               <div style={{ textAlign: "center", marginBottom: 16 }}>
-                <div style={{ width: 60, height: 60, borderRadius: "50%", background: accent, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: "1.3rem", color: "#fff", margin: "0 auto 10px" }}>
+                <div className="supplier-identity-avatar" style={{ background: accent }}>
                   {initials}
                 </div>
-                <div style={{ fontWeight: 800, fontSize: "1rem", color: "#1e293b" }}>{displayName}</div>
-                <div style={{ fontSize: "0.82rem", color: MUTED, marginTop: 2 }}>
+                <div className="supplier-identity-name">{displayName}</div>
+                <div className="supplier-identity-meta">
                   {roleOrType}{location ? ` — ${location}` : ""}
                 </div>
                 {isA && (
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginTop: 8 }}>
+                  <div className="supplier-identity-rating">
                     <Stars rating={evalAggregate?.averageOverallScore ?? 0} />
-                    <span style={{ fontSize: "0.78rem", color: MUTED }}>
+                    <span>
                       {evalAggregate && evalAggregate.activeEvaluations > 0
                         ? `${evalAggregate.averageOverallScore.toFixed(1)} / 5`
                         : "nessuna valutazione"}
@@ -713,7 +903,7 @@ export function RevampSupplierDashboardPage() {
                 </div>
               )}
 
-              <div style={{ borderTop: "1px solid #f1f5f9", paddingTop: 12 }}>
+              <div className="supplier-identity-details">
                 {isA ? (
                   <>
                     {locationA     && <InfoRow icon={<MapPin size={12} />} label="Sede"       value={locationA} />}
@@ -731,13 +921,13 @@ export function RevampSupplierDashboardPage() {
                 )}
               </div>
 
-              <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+              <div className="supplier-identity-actions">
                 <button type="button" onClick={() => setShowModal(true)}
-                  style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 5, padding: "8px 0", background: "#fff", border: `1.5px solid ${accent}`, borderRadius: 6, fontSize: "0.78rem", fontWeight: 600, color: accent, cursor: "pointer" }}>
+                  className="supplier-identity-action is-primary">
                   <MessageSquare size={12} /> {isDraft ? "Continua" : "Modifica"}
                 </button>
                 <button type="button" onClick={handlePrint}
-                  style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 5, padding: "8px 0", background: "#fff", border: "1.5px solid #d1d5db", borderRadius: 6, fontSize: "0.78rem", fontWeight: 600, color: "#374151", cursor: "pointer" }}>
+                  className="supplier-identity-action is-secondary">
                   <Download size={12} /> Scarica PDF
                 </button>
               </div>
@@ -1033,50 +1223,6 @@ export function RevampSupplierDashboardPage() {
                   </SectionCard>
                 </>
               )}
-
-              {/* ── Riepilogo completamento ── */}
-              <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 10, padding: "18px 20px" }}>
-                <div style={{ fontWeight: 700, fontSize: "0.9rem", color: "#1e293b", marginBottom: 12 }}>
-                  Avanzamento candidatura
-                </div>
-                {(isA
-                  ? [
-                      { key: "S1",     label: "Dati Anagrafici" },
-                      { key: "S2",     label: "Tipologia Professionale" },
-                      { key: "S3A|S3", label: "Competenze" },
-                      { key: "S4",     label: "Disponibilità e Allegati" },
-                      { key: "S5",     label: "Dichiarazioni" },
-                    ]
-                  : [
-                      { key: "S1", label: "Dati Aziendali" },
-                      { key: "S2", label: "Struttura e Dimensione" },
-                      { key: "S3", label: "Servizi Offerti" },
-                      { key: "S4", label: "Certificazioni e Allegati" },
-                      { key: "S5", label: "Dichiarazioni" },
-                    ]
-                ).map(({ key, label }) => {
-                  const keys = key.split("|");
-                  const sec  = keys.map(k => sections[k]).find(sec => sec !== undefined);
-                  const done = sec?.completed === true;
-                  return (
-                    <div key={key} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: "1px solid #f1f5f9" }}>
-                      <span style={{ width: 20, height: 20, borderRadius: "50%", background: done ? "#16a34a" : "#f3f4f6", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "0.68rem", color: done ? "#fff" : "#9ca3af", fontWeight: 700, flexShrink: 0 }}>
-                        {done ? "✓" : "—"}
-                      </span>
-                      <span style={{ fontSize: "0.83rem", color: done ? "#1e293b" : "#9ca3af", fontWeight: done ? 500 : 400, flex: 1 }}>{label}</span>
-                      {sec?.updatedAt && (
-                        <span style={{ fontSize: "0.72rem", color: MUTED }}>{new Date(sec.updatedAt).toLocaleDateString("it-IT")}</span>
-                      )}
-                    </div>
-                  );
-                })}
-                <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 10 }}>
-                  <div style={{ flex: 1, height: 6, background: "#e5e7eb", borderRadius: 3, overflow: "hidden" }}>
-                    <div style={{ width: `${(completedCount / 5) * 100}%`, height: "100%", background: accent, borderRadius: 3, transition: "width .4s" }} />
-                  </div>
-                  <span style={{ fontSize: "0.78rem", fontWeight: 600, color: accent }}>{completedCount}/5</span>
-                </div>
-              </div>
             </div>
           </div>
         </div>
@@ -1084,8 +1230,11 @@ export function RevampSupplierDashboardPage() {
 
       {/* ── Tab: Documenti ── */}
       {activeTab === "documenti" && (
-        <div style={{ maxWidth: 1080, margin: "40px auto", padding: "0 24px" }}>
-          <div style={{ fontWeight: 700, fontSize: "1rem", color: "#1e293b", marginBottom: 16 }}>Documenti caricati</div>
+        <div style={{ maxWidth: 1080, margin: "24px auto 32px", padding: "0 24px", width: "100%" }}>
+          <div className="supplier-documents-head">
+            <h3>Documenti caricati</h3>
+            <span className="supplier-documents-count">{docsList.length} file</span>
+          </div>
           {docsList.length === 0 ? (
             <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 10, padding: "40px 32px", textAlign: "center" }}>
               <FileText size={40} color="#d1d5db" style={{ margin: "0 auto 16px", display: "block" }} />
@@ -1093,93 +1242,107 @@ export function RevampSupplierDashboardPage() {
               <div style={{ fontSize: "0.84rem", color: MUTED }}>I documenti allegati durante la compilazione appariranno qui.</div>
             </div>
           ) : (
-            <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 10, overflow: "hidden" }}>
-              {docsList.map((doc, i) => (
-                <div key={doc.storageKey} style={{ display: "flex", alignItems: "center", gap: 14, padding: "14px 20px", borderBottom: i < docsList.length - 1 ? "1px solid #f1f5f9" : "none" }}>
-                  <div style={{ width: 38, height: 38, borderRadius: 8, background: "#f3f4f6", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                    <FileText size={18} color="#6b7280" />
-                  </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontWeight: 600, fontSize: "0.88rem", color: "#1e293b" }}>{doc.label}</div>
-                    <div style={{ fontSize: "0.76rem", color: MUTED, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                      {doc.fileName} · {formatDocSize(doc.sizeBytes)} · {doc.subLabel}
+            <div className="supplier-documents-list">
+              {docsList.map((doc) => {
+                const tone = documentTone(doc);
+                const Icon = tone === "image" ? Image : FileText;
+                return (
+                  <div key={doc.storageKey} className="supplier-document-card">
+                    <div className={`supplier-document-icon is-${tone}`}>
+                      <Icon size={19} />
                     </div>
+                    <div style={{ minWidth: 0 }}>
+                      <div className="supplier-document-title">{doc.label}</div>
+                      <div className="supplier-document-file">{doc.fileName}</div>
+                      <div className="supplier-document-meta">
+                        <span className="supplier-document-chip is-section">{doc.subLabel}</span>
+                        <span className="supplier-document-chip">{formatDocSize(doc.sizeBytes)}</span>
+                        {tone === "pdf" ? <span className="supplier-document-chip">PDF</span> : null}
+                        {tone === "image" ? <span className="supplier-document-chip">Immagine</span> : null}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="supplier-document-download"
+                      onClick={() => handleDownload(doc.fileName, doc.storageKey)}
+                      disabled={downloadingKey === doc.storageKey || !application?.id}
+                    >
+                      <Download size={13} />
+                      {downloadingKey === doc.storageKey ? "..." : "Scarica"}
+                    </button>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => handleDownload(doc.fileName, doc.storageKey)}
-                    disabled={downloadingKey === doc.storageKey || !application?.id}
-                    style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 14px", background: "#fff", border: "1.5px solid #d1d5db", borderRadius: 6, fontSize: "0.78rem", fontWeight: 600, color: "#374151", cursor: application?.id ? "pointer" : "not-allowed", opacity: downloadingKey === doc.storageKey ? 0.6 : 1, flexShrink: 0 }}
-                  >
-                    <Download size={13} />
-                    {downloadingKey === doc.storageKey ? "..." : "Scarica"}
-                  </button>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
       )}
-
       {/* ── Tab: Valutazioni ── */}
       {activeTab === "valutazioni" && (
-        <div style={{ maxWidth: 1080, margin: "40px auto", padding: "0 24px" }}>
+        <div style={{ maxWidth: 1080, margin: "24px auto 32px", padding: "0 24px", width: "100%" }}>
+          <div className="supplier-documents-head">
+            <h3>Valutazioni ricevute</h3>
+            <span className="supplier-documents-count">{evalAggregate?.activeEvaluations ?? 0} valutazioni</span>
+          </div>
           {evalAggregate && evalAggregate.activeEvaluations > 0 ? (
-            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            <div className="supplier-evaluation-grid">
               {/* Score summary card */}
-              <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 10, padding: "28px 32px", display: "flex", alignItems: "center", gap: 40 }}>
-                <div style={{ textAlign: "center", minWidth: 120 }}>
-                  <div style={{ fontSize: "3rem", fontWeight: 900, color: "#f59e0b", lineHeight: 1 }}>
+              <div className="supplier-evaluation-card supplier-evaluation-summary">
+                <div className="supplier-evaluation-score">
+                  <div className="supplier-evaluation-number">
                     {evalAggregate.averageOverallScore.toFixed(1)}
                   </div>
-                  <div style={{ marginTop: 8 }}>
+                  <div className="supplier-evaluation-stars">
                     <Stars rating={evalAggregate.averageOverallScore} />
                   </div>
-                  <div style={{ fontSize: "0.78rem", color: MUTED, marginTop: 6 }}>punteggio medio</div>
                 </div>
-                <div style={{ width: 1, height: 80, background: "#e5e7eb", flexShrink: 0 }} />
-                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                  <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-                    <span style={{ fontSize: "1.6rem", fontWeight: 800, color: "#1e293b" }}>{evalAggregate.activeEvaluations}</span>
-                    <span style={{ fontSize: "0.84rem", color: MUTED }}>valutazion{evalAggregate.activeEvaluations === 1 ? "e" : "i"} ricevut{evalAggregate.activeEvaluations === 1 ? "a" : "e"}</span>
+                <div className="supplier-evaluation-copy">
+                  <div className="supplier-evaluation-title">Punteggio medio</div>
+                  <div className="supplier-evaluation-kpi">
+                    <span>{evalAggregate.activeEvaluations}</span>
+                    <strong>valutazion{evalAggregate.activeEvaluations === 1 ? "e" : "i"} ricevut{evalAggregate.activeEvaluations === 1 ? "a" : "e"}</strong>
                   </div>
                   {evalAggregate.totalEvaluations > evalAggregate.activeEvaluations && (
-                    <div style={{ fontSize: "0.78rem", color: MUTED }}>
+                    <div className="supplier-evaluation-note">
                       {evalAggregate.totalEvaluations - evalAggregate.activeEvaluations} annullat{evalAggregate.totalEvaluations - evalAggregate.activeEvaluations === 1 ? "a" : "e"}
                     </div>
                   )}
-                  <div style={{ fontSize: "0.82rem", color: MUTED, marginTop: 4 }}>
+                  <div className="supplier-evaluation-note">
                     Le valutazioni sono assegnate dai responsabili del Gruppo Solco dopo ogni collaborazione.
                   </div>
                 </div>
               </div>
 
               {/* Score bar visual */}
-              <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 10, padding: "20px 32px" }}>
-                <div style={{ fontWeight: 700, fontSize: "0.88rem", color: "#374151", marginBottom: 14 }}>Distribuzione punteggio</div>
+              <div className="supplier-evaluation-card">
+                <div className="supplier-evaluation-title">Distribuzione punteggio</div>
                 {[5, 4, 3, 2, 1].map(star => {
                   const distribution = evalAggregate.scoreDistribution ?? {};
                   const maxCount = Math.max(1, ...[1, 2, 3, 4, 5].map(score => distribution[String(score)] ?? 0));
                   const count = distribution[String(star)] ?? 0;
                   const pct = Math.round((count / maxCount) * 100);
                   return (
-                    <div key={star} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
-                      <span style={{ fontSize: "0.78rem", color: MUTED, minWidth: 16, textAlign: "right" }}>{star}</span>
+                    <div key={star} className="supplier-score-row">
+                      <span>{star}</span>
                       <Star size={11} fill="#f59e0b" color="#f59e0b" />
-                      <div style={{ flex: 1, height: 8, background: "#f3f4f6", borderRadius: 4, overflow: "hidden" }}>
-                        <div style={{ width: `${pct}%`, height: "100%", background: "#f59e0b", borderRadius: 4, transition: "width .4s" }} />
+                      <div className="supplier-score-track">
+                        <div style={{ width: `${pct}%` }} />
                       </div>
-                      <span style={{ fontSize: "0.76rem", color: MUTED, minWidth: 22, textAlign: "right" }}>{count}</span>
+                      <strong>{count}</strong>
                     </div>
                   );
                 })}
               </div>
             </div>
           ) : (
-            <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 10, padding: "40px 32px", textAlign: "center" }}>
-              <Star size={40} color="#d1d5db" style={{ margin: "0 auto 16px", display: "block" }} />
-              <div style={{ fontWeight: 700, fontSize: "1rem", color: "#6b7280", marginBottom: 8 }}>Nessuna valutazione ancora</div>
-              <div style={{ fontSize: "0.84rem", color: MUTED }}>Le valutazioni appariranno qui dopo le prime collaborazioni con il Gruppo Solco.</div>
+            <div className="supplier-empty-state-card">
+              <div className="supplier-empty-state-icon is-rating">
+                <Star size={22} />
+              </div>
+              <div>
+                <div className="supplier-empty-state-title">Nessuna valutazione ancora</div>
+                <div className="supplier-empty-state-text">Le valutazioni appariranno qui dopo le prime collaborazioni con il Gruppo Solco.</div>
+              </div>
             </div>
           )}
         </div>
@@ -1187,15 +1350,41 @@ export function RevampSupplierDashboardPage() {
 
       {/* ── Tab: Comunicazioni ── */}
       {activeTab === "comunicazioni" && (
-        <div style={{ maxWidth: 1080, margin: "40px auto", padding: "0 24px" }}>
-          <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 10, padding: "20px 24px" }}>
-            <div style={{ fontWeight: 700, fontSize: "0.95rem", color: "#1e293b", marginBottom: 14 }}>Tutte le comunicazioni</div>
-            {communicationRows.map((msg, i) => (
-              <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "12px 0", borderBottom: "1px solid #f1f5f9" }}>
-                <span style={{ fontSize: "0.73rem", color: MUTED, minWidth: 80, flexShrink: 0, marginTop: 2 }}>{msg.date}</span>
-                <span style={{ fontSize: "0.84rem", color: "#1e293b" }}>{msg.text}</span>
+        <div style={{ maxWidth: 1080, margin: "24px auto 32px", padding: "0 24px", width: "100%" }}>
+          <div className="supplier-documents-head">
+            <h3>Comunicazioni</h3>
+            <span className="supplier-documents-count">{communicationCount} aggiornamenti</span>
+          </div>
+          <div className="supplier-communications-card">
+            <div className="supplier-communications-top">
+              <div>
+                <div className="supplier-communications-title">Storico comunicazioni</div>
+                <div className="supplier-communications-subtitle">Aggiornamenti relativi alla tua candidatura.</div>
               </div>
-            ))}
+              <div className="supplier-communications-icon">
+                <MessageSquare size={19} />
+              </div>
+            </div>
+            {communicationRows.map((msg, i) => {
+              const isOpenIntegrationRow = hasOpenIntegration && application && i === openIntegrationRowIndex;
+              return (
+              <div key={i} className={`supplier-communication-row${isOpenIntegrationRow ? " is-actionable" : ""}`}>
+                <div className="supplier-communication-marker" />
+                <span className="supplier-communication-date">{msg.date}</span>
+                <span className="supplier-communication-text">
+                  <span>{msg.text}</span>
+                  {isOpenIntegrationRow ? (
+                    <span className="supplier-communication-action-meta">
+                      {integrationDueLabel ? <span>Scadenza: {integrationDueLabel}</span> : null}
+                      <button type="button" className="supplier-communication-row-btn" onClick={openIntegrationDrawer}>
+                        Rispondi
+                      </button>
+                    </span>
+                  ) : null}
+                </span>
+              </div>
+              );
+            })}
           </div>
         </div>
       )}

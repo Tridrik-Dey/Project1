@@ -55,6 +55,8 @@ class RevampReviewWorkflowServiceTest {
     private RevampAuditService auditService;
     @Mock
     private RevampProfileProjectionService profileProjectionService;
+    @Mock
+    private RevampIntegrationRequestMailService integrationRequestMailService;
     @Spy
     private ObjectMapper objectMapper = new ObjectMapper();
 
@@ -100,6 +102,7 @@ class RevampReviewWorkflowServiceTest {
         verify(integrationRequestRepository).save(captor.capture());
         assertEquals(IntegrationRequestStatus.OPEN, captor.getValue().getStatus());
         verify(auditService).append(any(RevampAuditEventInputDto.class));
+        verify(integrationRequestMailService).sendIntegrationRequestNotice(app, captor.getValue());
     }
 
     @Test

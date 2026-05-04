@@ -3,6 +3,7 @@ import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, CheckSquare } from "lucide-react";
 import { useAuth } from "../../auth/AuthContext";
 import { saveRevampApplicationSection } from "../../api/revampApplicationApi";
+import { loadRevampApplicationIdForRegistry } from "../../utils/revampApplicationSession";
 
 const NAVY  = "#0f2a52";
 const GREEN = "#1a5c3a";
@@ -127,6 +128,7 @@ export function RevampStep5DichiarazioniPage() {
   const isDocente = isA && tipologia === "docente";
   const accent    = isA ? NAVY : GREEN;
   const title     = isA ? "Albo A — Professionisti" : "Albo B — Aziende";
+  const registryType = isA ? "ALBO_A" : "ALBO_B";
 
   const [checks,       setChecks]       = useState<Checks>(() =>
     Object.fromEntries(DECLARATIONS.map(d => [d.id, false]))
@@ -152,7 +154,7 @@ export function RevampStep5DichiarazioniPage() {
     sessionStorage.setItem("revamp_s5_done", "true");
     if (auth?.token) {
       try {
-        const appId = sessionStorage.getItem("revamp_applicationId");
+        const appId = loadRevampApplicationIdForRegistry(registryType);
         if (appId) {
           const frontendPayload = { declarations: Object.entries(checks).filter(([, v]) => v).map(([k]) => k) };
           let apiPayload: Record<string, unknown> = { ...frontendPayload };
@@ -292,10 +294,10 @@ export function RevampStep5DichiarazioniPage() {
       </div>
 
       {/* ── Bottom nav ── */}
-      <div style={{ background: "#fff", borderTop: "1px solid #e5e7eb", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 36px", position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 10 }}>
-        <Link
+      <div className="wizard-bottom-nav" style={{ background: "#fff", borderTop: "1px solid #e5e7eb", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 36px", position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 10 }}>
+        <Link className="wizard-nav-button wizard-nav-button-prev"
           to={`/apply/${registryParam}/step/4`}
-          style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 18px", background: "#fff", border: `1.5px solid ${accent}`, borderRadius: 6, fontWeight: 600, fontSize: "0.84rem", color: accent, textDecoration: "none" }}
+          style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 20px", background: "#fff", border: `1.5px solid ${accent}`, borderRadius: 6, fontWeight: 600, fontSize: "0.84rem", color: accent, textDecoration: "none" }}
         >
           <ArrowLeft size={14} /> Sezione precedente
         </Link>
@@ -316,7 +318,7 @@ export function RevampStep5DichiarazioniPage() {
           )}
         </div>
 
-        <button
+        <button className="wizard-nav-button wizard-nav-button-next"
           type="button"
           onClick={handleInvia}
           style={{

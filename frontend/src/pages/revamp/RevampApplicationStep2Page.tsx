@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { BookOpenCheck, BriefcaseBusiness, Building2, Handshake, Layers3, Save, UserRoundCheck, Wrench } from "lucide-react";
+import { BookOpenCheck, BriefcaseBusiness, Building2, Handshake, Info, Layers3, Save, UserRoundCheck, Wrench } from "lucide-react";
 import { Link, Navigate, useParams } from "react-router-dom";
 import {
   getRevampApplicationSections,
@@ -11,6 +11,7 @@ import {
 import { HttpError } from "../../api/http";
 import { useAuth } from "../../auth/AuthContext";
 import { useI18n } from "../../i18n/I18nContext";
+import { ATECO_FORMAT_ERROR, isValidAtecoCode, normalizeAtecoCode } from "../../utils/atecoValidation";
 import { saveRevampApplicationSession } from "../../utils/revampApplicationSession";
 import { resolveStepGuardRedirect } from "./revampFlow";
 
@@ -103,6 +104,15 @@ const EMPLOYEE_RANGE_OPTIONS = [
   { value: "51_250", label: "51 - 250", hint: "Organizzazione articolata" },
   { value: "OVER_250", labelKey: "revamp.step2.option.employeeRange.over250", hint: "Grande impresa" }
 ] as const;
+
+function ErrorTooltip({ message }: { message: string }) {
+  return (
+    <span className="ateco-error-tooltip-wrap" tabIndex={0}>
+      <Info className="h-4 w-4" aria-hidden="true" />
+      <span className="ateco-error-tooltip" role="tooltip">{message}</span>
+    </span>
+  );
+}
 
 function parsePayload<T>(payloadJson?: string | null): T | null {
   if (!payloadJson) return null;
@@ -250,6 +260,7 @@ export function RevampApplicationStep2Page() {
       const next: FieldErrors = {};
       if (!alboA.professionalType.trim()) next.professionalType = t("revamp.step2.error.professionalTypeRequired");
       if (alboA.professionalType === "ALTRO" && !alboA.atecoCode.trim()) next.atecoCode = t("revamp.step2.error.atecoRequiredForOther");
+      else if (alboA.atecoCode.trim() && !isValidAtecoCode(alboA.atecoCode)) next.atecoCode = ATECO_FORMAT_ERROR;
       return next;
     }
 
@@ -257,13 +268,14 @@ export function RevampApplicationStep2Page() {
     if (!alboB.employeeRange.trim()) next.employeeRange = t("revamp.step2.error.employeeRangeRequired");
     if (!alboB.revenueBand.trim()) next.revenueBand = "Fascia fatturato obbligatoria.";
     if (!alboB.atecoPrimary.trim()) next.atecoPrimary = t("revamp.step2.error.atecoPrimaryRequired");
+    else if (!isValidAtecoCode(alboB.atecoPrimary)) next.atecoPrimary = ATECO_FORMAT_ERROR;
     const validRegions = alboB.operatingRegions.filter((item) => item.region.trim());
     if (validRegions.length === 0) next.operatingRegions = t("revamp.step2.error.operatingRegionsRequired");
     const nonBlankSecondary = alboB.atecoSecondary.map((item) => item.trim()).filter(Boolean);
     if (nonBlankSecondary.length > 3) next.atecoSecondary = "Massimo 3 codici ATECO secondari.";
-    if (alboB.thirdSectorType.trim() && !alboB.runtsNumber.trim()) {
-      next.runtsNumber = "Numero RUNTS obbligatorio se indicata tipologia terzo settore.";
-    }
+    alboB.atecoSecondary.forEach((value, index) => {
+      if (value.trim() && !isValidAtecoCode(value)) next[`atecoSecondary_${index}`] = ATECO_FORMAT_ERROR;
+    });
     return next;
   }
 
@@ -275,10 +287,11 @@ export function RevampApplicationStep2Page() {
     setErrors(validationErrors);
     const completed = Object.keys(validationErrors).length === 0;
     const payload = registryType === "ALBO_A"
-      ? alboA
+      ? { ...alboA, atecoCode: normalizeAtecoCode(alboA.atecoCode) }
       : {
           ...alboB,
-          atecoSecondary: alboB.atecoSecondary.map((item) => item.trim()).filter(Boolean).slice(0, 3),
+          atecoPrimary: normalizeAtecoCode(alboB.atecoPrimary),
+          atecoSecondary: alboB.atecoSecondary.map(normalizeAtecoCode).filter(Boolean).slice(0, 3),
           operatingRegions: alboB.operatingRegions
             .map((item) => ({ region: item.region.trim(), provincesCsv: item.provincesCsv.trim() }))
             .filter((item) => item.region),
@@ -373,12 +386,20 @@ export function RevampApplicationStep2Page() {
                   className="floating-input auth-input"
                   value={alboA.atecoCode}
                   onChange={(e) => {
-                    setAlboA((prev) => ({ ...prev, atecoCode: e.target.value }));
+                    const value = e.target.value;
+                    setAlboA((prev) => ({ ...prev, atecoCode: value }));
+                    setErrors((prev) => ({
+                      ...prev,
+                      atecoCode: value.trim() && !isValidAtecoCode(value) ? ATECO_FORMAT_ERROR : ""
+                    }));
                     markDirty();
                   }}
                   placeholder=" "
                 />
-                <span className="floating-field-label">{t("revamp.step2.field.atecoCode", { required: alboA.professionalType === "ALTRO" ? "*" : t("revamp.step2.optional") })}</span>
+                <span className="floating-field-label">
+                  {t("revamp.step2.field.atecoCode", { required: alboA.professionalType === "ALTRO" ? "*" : t("revamp.step2.optional") })}
+                  {errors.atecoCode === ATECO_FORMAT_ERROR ? <ErrorTooltip message={errors.atecoCode} /> : null}
+                </span>
               </label>
             </div>
             <div className="home-step-card">
@@ -404,7 +425,7 @@ export function RevampApplicationStep2Page() {
               </div>
             </div>
             {errors.professionalType ? <p className="error">{errors.professionalType}</p> : null}
-            {errors.atecoCode ? <p className="error">{errors.atecoCode}</p> : null}
+            {errors.atecoCode && errors.atecoCode !== ATECO_FORMAT_ERROR ? <p className="error">{errors.atecoCode}</p> : null}
           </>
         ) : (
           <>
@@ -453,12 +474,20 @@ export function RevampApplicationStep2Page() {
                   className="floating-input auth-input"
                   value={alboB.atecoPrimary}
                   onChange={(e) => {
-                    setAlboB((prev) => ({ ...prev, atecoPrimary: e.target.value }));
+                    const value = e.target.value;
+                    setAlboB((prev) => ({ ...prev, atecoPrimary: value }));
+                    setErrors((prev) => ({
+                      ...prev,
+                      atecoPrimary: value.trim() && !isValidAtecoCode(value) ? ATECO_FORMAT_ERROR : ""
+                    }));
                     markDirty();
                   }}
                   placeholder=" "
                 />
-                <span className="floating-field-label">{t("revamp.step2.field.atecoPrimary")}</span>
+                <span className="floating-field-label">
+                  {t("revamp.step2.field.atecoPrimary")}
+                  {errors.atecoPrimary === ATECO_FORMAT_ERROR ? <ErrorTooltip message={errors.atecoPrimary} /> : null}
+                </span>
               </label>
               <label className={`floating-field ${alboB.revenueBand ? "has-value" : ""}`}>
                 <input
@@ -486,14 +515,22 @@ export function RevampApplicationStep2Page() {
                         className="floating-input auth-input"
                         value={value}
                         onChange={(e) => {
+                          const value = e.target.value;
                           const next = [...alboB.atecoSecondary];
-                          next[index] = e.target.value;
+                          next[index] = value;
                           setAlboB((prev) => ({ ...prev, atecoSecondary: next }));
+                          setErrors((prev) => ({
+                            ...prev,
+                            [`atecoSecondary_${index}`]: value.trim() && !isValidAtecoCode(value) ? ATECO_FORMAT_ERROR : ""
+                          }));
                           markDirty();
                         }}
                         placeholder=" "
                       />
-                      <span className="floating-field-label">Codice ATECO secondario</span>
+                      <span className="floating-field-label">
+                        Codice ATECO secondario
+                        {errors[`atecoSecondary_${index}`] === ATECO_FORMAT_ERROR ? <ErrorTooltip message={errors[`atecoSecondary_${index}`]} /> : null}
+                      </span>
                     </label>
                     <button
                       type="button"
@@ -665,7 +702,7 @@ export function RevampApplicationStep2Page() {
             </div>
             {errors.employeeRange ? <p className="error">{errors.employeeRange}</p> : null}
             {errors.revenueBand ? <p className="error">{errors.revenueBand}</p> : null}
-            {errors.atecoPrimary ? <p className="error">{errors.atecoPrimary}</p> : null}
+            {errors.atecoPrimary && errors.atecoPrimary !== ATECO_FORMAT_ERROR ? <p className="error">{errors.atecoPrimary}</p> : null}
             {errors.atecoSecondary ? <p className="error">{errors.atecoSecondary}</p> : null}
             {errors.operatingRegions ? <p className="error">{errors.operatingRegions}</p> : null}
             {errors.runtsNumber ? <p className="error">{errors.runtsNumber}</p> : null}

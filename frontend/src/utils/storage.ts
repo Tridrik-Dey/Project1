@@ -7,6 +7,7 @@ export interface AuthState {
   fullName: string;
   role: "SUPPLIER" | "ADMIN";
   adminGovernanceRole?: string;
+  emailVerified?: boolean;
 }
 
 function decodeJwtPayload(token: string): Record<string, unknown> | null {

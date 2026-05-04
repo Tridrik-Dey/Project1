@@ -14,5 +14,5 @@ public interface RevampOtpChallengeRepository extends JpaRepository<RevampOtpCha
             OtpChallengeType challengeType,
             OtpChallengeStatus status
     );
+    void deleteByApplicationId(UUID applicationId);
 }
-

@@ -44,6 +44,7 @@ public class RevampReviewWorkflowService {
     private final RevampAuditService auditService;
     private final RevampGovernanceAuthorizationService governanceAuthorizationService;
     private final RevampProfileProjectionService profileProjectionService;
+    private final RevampIntegrationRequestMailService integrationRequestMailService;
     private final ObjectMapper objectMapper;
     private static final List<ReviewCaseStatus> FINAL_STATUSES = List.of(ReviewCaseStatus.DECIDED, ReviewCaseStatus.CLOSED);
 
@@ -165,6 +166,14 @@ public class RevampReviewWorkflowService {
             throw new IllegalArgumentException("Verification note is required for outcome: " + verificationOutcome.name());
         }
 
+        if (reviewCase.getAssignedToUser() != null && verifiedByUserId != null
+                && !reviewCase.getAssignedToUser().getId().equals(verifiedByUserId)) {
+            String callerRole = resolveActorGovernanceRole(verifiedByUserId);
+            if (!"SUPER_ADMIN".equals(callerRole)) {
+                throw new IllegalStateException("Solo il revisore assegnato può verificare questa pratica.");
+            }
+        }
+
         if (verifiedByUserId != null) {
             User verifiedBy = userRepository.findById(verifiedByUserId)
                     .orElseThrow(() -> new EntityNotFoundException("User", verifiedByUserId));
@@ -256,6 +265,8 @@ public class RevampReviewWorkflowService {
                         + "\",\"actorName\":\"" + esc(actorName)
                         + "\",\"applicantName\":\"" + esc(application.getApplicantUser() != null ? application.getApplicantUser().getFullName() : "") + "\"}"
         ));
+
+        integrationRequestMailService.sendIntegrationRequestNotice(application, request);
 
         return reviewCaseMapper.toSummary(reviewCase);
     }
