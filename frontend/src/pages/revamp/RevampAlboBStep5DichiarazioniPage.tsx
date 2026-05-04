@@ -3,6 +3,7 @@ import { useNavigate, Link } from "react-router-dom";
 import { ArrowLeft, CheckSquare } from "lucide-react";
 import { useAuth } from "../../auth/AuthContext";
 import { saveRevampApplicationSection } from "../../api/revampApplicationApi";
+import { loadRevampApplicationIdForRegistry } from "../../utils/revampApplicationSession";
 
 const GREEN = "#1a5c3a";
 const MUTED = "#6b7280";
@@ -132,7 +133,7 @@ export function RevampAlboBStep5DichiarazioniPage() {
     sessionStorage.setItem("revamp_b5", JSON.stringify(payload));
     if (auth?.token) {
       try {
-        const appId = sessionStorage.getItem("revamp_applicationId");
+        const appId = loadRevampApplicationIdForRegistry("ALBO_B");
         if (appId) {
           const apiPayload = {
             ...payload,

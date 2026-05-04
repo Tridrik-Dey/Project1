@@ -15,6 +15,8 @@ import {
   type RevampIntegrationRequestSummary,
   type MyEvaluationAggregate,
 } from "../../api/revampApplicationApi";
+import { saveRevampApplicationIdForRegistry } from "../../utils/revampApplicationSession";
+import { saveRevampIntegrationEditSession } from "../../utils/revampIntegrationEditSession";
 
 const NAVY  = "#0f2a52";
 const GREEN = "#1a5c3a";
@@ -107,11 +109,86 @@ const STATUS_CFG: Record<string, { label: string; icon: string; bg: string; bord
   REJECTED:     { label: "Non approvata",         icon: "✕", bg: "#fef2f2", border: "#fecaca", color: "#dc2626", sub: "La candidatura non è stata approvata. Contatta il team Solco per maggiori informazioni." },
 };
 
+STATUS_CFG.INTEGRATION_REQUIRED = {
+  label: "Richiesta integrazione inviata",
+  icon: "!",
+  bg: "#fff7ed",
+  border: "#fdba74",
+  color: "#9a3412",
+  sub: "Il Gruppo Solco richiede alcune integrazioni prima di completare la verifica."
+};
+STATUS_CFG.WAITING_SUPPLIER_RESPONSE = STATUS_CFG.INTEGRATION_REQUIRED;
+
 type Tab = "profilo" | "documenti" | "valutazioni" | "comunicazioni";
+type RequestedItem = {
+  code: string;
+  label: string;
+  instruction: string;
+  documentType?: string;
+  certificationKey?: string;
+  certificationLabel?: string;
+  targetStep?: number;
+};
 
 /* ─── module-level helpers ──────────────────────────── */
 function parseSection(sections: Record<string, RevampSectionSnapshot>, key: string): Record<string, unknown> {
   return sections[key] ? (JSON.parse(sections[key].payloadJson) as Record<string, unknown>) : {};
+}
+
+function parseRequestedItems(payload: unknown): RequestedItem[] {
+  if (!payload || typeof payload !== "object") return [];
+  const rawItems = Array.isArray((payload as { items?: unknown }).items)
+    ? (payload as { items: unknown[] }).items
+    : [];
+  return rawItems
+    .map((item) => {
+      if (!item || typeof item !== "object") return null;
+      const value = item as Record<string, unknown>;
+      const parsed: RequestedItem = {
+        code: typeof value.code === "string" ? value.code : "OTHER",
+        label: typeof value.label === "string" ? value.label : "Elemento richiesto",
+        instruction: typeof value.instruction === "string" ? value.instruction : ""
+      };
+      if (typeof value.documentType === "string") parsed.documentType = value.documentType;
+      if (typeof value.certificationKey === "string") parsed.certificationKey = value.certificationKey;
+      if (typeof value.certificationLabel === "string") parsed.certificationLabel = value.certificationLabel;
+      if (typeof value.targetStep === "number") parsed.targetStep = value.targetStep;
+      return parsed;
+    })
+    .filter((item): item is RequestedItem => Boolean(item));
+}
+
+function targetStepForItem(item: RequestedItem): number {
+  if (item.targetStep && item.targetStep >= 1 && item.targetStep <= 5) return item.targetStep;
+  if (item.code === "THEMATIC_SPECIFICATION" || item.code === "EXPERIENCE_CONSISTENCY") return 3;
+  if (item.documentType || item.code === "CV" || item.code === "PROFESSIONAL_REGISTER" || item.code.startsWith("CERT_")) return 4;
+  return 1;
+}
+
+function wizardStepPath(registryParam: string, step: number): string {
+  const normalizedStep = Math.max(1, Math.min(step, 5));
+  return normalizedStep <= 1 ? `/apply/${registryParam}` : `/apply/${registryParam}/step/${normalizedStep}`;
+}
+
+function sectionNameForStep(registryType: string, step: number): string {
+  if (registryType === "ALBO_B") {
+    const names: Record<number, string> = {
+      1: "Dati aziendali",
+      2: "Struttura",
+      3: "Servizi",
+      4: "Certificazioni",
+      5: "Dichiarazioni"
+    };
+    return names[step] ?? `Sezione ${step}`;
+  }
+  const names: Record<number, string> = {
+    1: "Anagrafica",
+    2: "Tipologia",
+    3: "Competenze",
+    4: "Disponibilita",
+    5: "Dichiarazioni"
+  };
+  return names[step] ?? `Sezione ${step}`;
 }
 
 function s(val: unknown): string {
@@ -257,6 +334,7 @@ export function RevampSupplierDashboardPage() {
   const [evalAggregate, setEvalAggregate] = useState<MyEvaluationAggregate | null>(null);
   const [communications, setCommunications] = useState<RevampApplicationCommunication[]>([]);
   const [openIntegrationRequest, setOpenIntegrationRequest] = useState<RevampIntegrationRequestSummary | null>(null);
+  const [integrationDrawerOpen, setIntegrationDrawerOpen] = useState(false);
   const [downloadingKey, setDownloadingKey] = useState<string | null>(null);
   const [showUserMenu, setShowUserMenu] = useState(false);
 
@@ -381,10 +459,14 @@ export function RevampSupplierDashboardPage() {
     ? new Date(application.submittedAt).toLocaleDateString("it-IT") : null;
   const isApproved = status === "APPROVED";
   const isDraft    = status === "DRAFT";
-  const hasOpenIntegration = status === "INTEGRATION_REQUIRED" && Boolean(openIntegrationRequest);
+  const hasOpenIntegration = (status === "INTEGRATION_REQUIRED" || status === "WAITING_SUPPLIER_RESPONSE") && Boolean(openIntegrationRequest);
   const integrationDueLabel = openIntegrationRequest?.dueAt
     ? new Date(openIntegrationRequest.dueAt).toLocaleDateString("it-IT")
     : null;
+  const requestedItems = parseRequestedItems(openIntegrationRequest?.requestedItemsJson);
+  const uploadItems = requestedItems.length > 0
+    ? requestedItems
+    : [{ code: "GENERAL_DOCUMENT", label: "Documento richiesto", instruction: "" }];
   const expiryDate = new Date();
   expiryDate.setFullYear(expiryDate.getFullYear() + 1);
 
@@ -401,6 +483,10 @@ export function RevampSupplierDashboardPage() {
     })),
     { date: new Date().toLocaleDateString("it-IT"), text: `Accesso all'area riservata - ${alboLabel}` }
   ];
+  const openIntegrationRowIndex = hasOpenIntegration
+    ? communicationRows.findIndex(row => row.text.toLowerCase().includes("richiesta integrazione"))
+    : -1;
+  const communicationCount = communicationRows.length;
 
   const tabItems: { id: Tab; label: string }[] = [
     { id: "profilo",       label: "Il mio profilo" },
@@ -456,6 +542,23 @@ export function RevampSupplierDashboardPage() {
     docsList.push({ label: typeLabel, subLabel: "Sezione 4", fileName: att.fileName, storageKey: att.storageKey, mimeType: att.mimeType ?? "application/octet-stream", sizeBytes: att.sizeBytes ?? 0 });
   }
 
+  function openIntegrationDrawer() {
+    if (!hasOpenIntegration) return;
+    setIntegrationDrawerOpen(true);
+  }
+
+  function rememberIntegrationEdit(step: number) {
+    if (!application) return;
+    saveRevampApplicationIdForRegistry(application.registryType, application.id);
+    saveRevampIntegrationEditSession({
+      applicationId: application.id,
+      registryType: application.registryType,
+      targetStep: step,
+      returnPath: `/apply/${registryParam}/my-profile`
+    });
+    setIntegrationDrawerOpen(false);
+  }
+
   function formatDocSize(bytes: number): string {
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
@@ -502,7 +605,7 @@ export function RevampSupplierDashboardPage() {
             {isDraft ? (
               <>
                 <p style={{ fontSize: "0.85rem", color: MUTED, marginBottom: 20, lineHeight: 1.6 }}>
-                  La tua candidatura è ancora in bozza. Puoi tornare al wizard per continuare la compilazione.
+                  La tua candidatura è ancora in bozza. Puoi tornare al modulo per continuare la compilazione.
                 </p>
                 <a
                   href={wizardStart}
@@ -540,6 +643,68 @@ export function RevampSupplierDashboardPage() {
         </div>
       )}
 
+      {integrationDrawerOpen && hasOpenIntegration && application && openIntegrationRequest ? (
+        <div className="supplier-integration-drawer-overlay" onClick={() => setIntegrationDrawerOpen(false)}>
+          <aside className="supplier-integration-drawer" onClick={event => event.stopPropagation()}>
+            <div className="supplier-integration-drawer-head">
+              <div>
+                <span className="supplier-integration-drawer-kicker">Comunicazioni</span>
+                <h2>Rispondi all'integrazione</h2>
+                <p>{integrationDueLabel ? `Scadenza: ${integrationDueLabel}` : "Scadenza non indicata"}</p>
+                <div className="supplier-integration-drawer-intro">
+                  Apri le sezioni indicate, correggi e salva i dati richiesti, poi invia la risposta al Gruppo Solco dalla stessa pagina.
+                </div>
+              </div>
+              <button type="button" className="supplier-integration-drawer-close" onClick={() => setIntegrationDrawerOpen(false)} aria-label="Chiudi">
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="supplier-integration-drawer-body">
+              <section className="supplier-integration-drawer-section">
+                <h3>Messaggio del Gruppo Solco</h3>
+                <p>{openIntegrationRequest.requestMessage || "Completa le informazioni richieste e invia di nuovo la candidatura."}</p>
+              </section>
+
+              <section className="supplier-integration-drawer-section">
+                <h3>Elementi richiesti</h3>
+                <div className="supplier-integration-drawer-items">
+                  {uploadItems.map(item => {
+                    const step = targetStepForItem(item);
+                    const sectionName = sectionNameForStep(application.registryType, step);
+                    return (
+                      <div key={`${item.code}-${item.label}`} className="supplier-integration-drawer-item">
+                        <div className="supplier-integration-drawer-item-main">
+                          <span className="supplier-integration-drawer-item-label">Elemento richiesto</span>
+                          <strong>{item.label}</strong>
+                          <p>{item.instruction || "Aggiorna questa parte della candidatura."}</p>
+                        </div>
+                        <Link
+                          className="supplier-integration-drawer-edit"
+                          to={wizardStepPath(registryParam, step)}
+                          onClick={() => rememberIntegrationEdit(step)}
+                        >
+                          Apri sezione {step} - {sectionName}
+                        </Link>
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+            </div>
+
+            <div className="supplier-integration-drawer-foot">
+              <div className="supplier-integration-drawer-foot-note">
+                Dopo aver salvato le correzioni nella sezione indicata, potrai inviare la risposta da quella pagina.
+              </div>
+              <button type="button" className="supplier-integration-drawer-secondary" onClick={() => setIntegrationDrawerOpen(false)}>
+                Chiudi
+              </button>
+            </div>
+          </aside>
+        </div>
+      ) : null}
+
       {/* ── Top bar ── */}
       <div style={{ background: "linear-gradient(120deg, #0b3f73 0%, #1b5d96 52%, #0c467f 100%)", borderBottom: "1px solid rgba(206,226,248,0.24)", display: "flex", alignItems: "center", padding: "0 32px", minHeight: 64 }}>
         {/* Brand */}
@@ -559,8 +724,11 @@ export function RevampSupplierDashboardPage() {
         <div style={{ display: "flex", gap: 0, marginLeft: 40, height: 64 }}>
           {tabItems.map(t => (
             <button key={t.id} type="button" onClick={() => setActiveTab(t.id)}
-              style={{ padding: "0 20px", height: "100%", background: "none", border: "none", borderBottom: activeTab === t.id ? "2.5px solid #f5c800" : "2.5px solid transparent", fontWeight: activeTab === t.id ? 700 : 500, fontSize: "0.87rem", color: activeTab === t.id ? "#fff" : "rgba(255,255,255,0.65)", cursor: "pointer" }}>
-              {t.label}
+              style={{ padding: "0 20px", height: "100%", background: "none", border: "none", borderBottom: activeTab === t.id ? "2.5px solid #f5c800" : "2.5px solid transparent", fontWeight: activeTab === t.id ? 700 : 500, fontSize: "0.87rem", color: activeTab === t.id ? "#fff" : "rgba(255,255,255,0.65)", cursor: "pointer", position: "relative" }}>
+              <span className="supplier-profile-tab-label">
+                {t.label}
+                {t.id === "comunicazioni" && hasOpenIntegration ? <span className="supplier-profile-nav-badge">1</span> : null}
+              </span>
             </button>
           ))}
         </div>
@@ -626,6 +794,11 @@ export function RevampSupplierDashboardPage() {
         <div style={{ textAlign: "right", fontSize: "0.78rem" }}>
           {proto !== "—" && <div style={{ color: statusCfg.color, fontWeight: 600, marginBottom: 4 }}>Codice: {proto}</div>}
           {submittedAt && <div style={{ color: statusCfg.color, opacity: 0.8 }}>Inviata il: {submittedAt}</div>}
+          {hasOpenIntegration && application && activeTab !== "comunicazioni" ? (
+            <button type="button" className="supplier-status-integration-btn" onClick={openIntegrationDrawer}>
+              Rispondi all'integrazione
+            </button>
+          ) : null}
           {isApproved && (
             <>
               <div style={{ fontWeight: 600, color: "#15803d", marginBottom: 4 }}>
@@ -643,24 +816,6 @@ export function RevampSupplierDashboardPage() {
       {/* ══════════════════════════════════════════
           Tab: Il mio profilo
       ══════════════════════════════════════════ */}
-      {hasOpenIntegration && application ? (
-        <div className="supplier-integration-alert">
-          <div className="supplier-integration-alert-icon">
-            <FileText size={18} />
-          </div>
-          <div className="supplier-integration-alert-body">
-            <strong>Documenti mancanti richiesti</strong>
-            <span>
-              Il Gruppo Solco richiede alcune integrazioni
-              {integrationDueLabel ? ` entro il ${integrationDueLabel}` : ""}.
-            </span>
-          </div>
-          <Link className="supplier-integration-alert-btn" to={`/application/${application.id}/integration-request`}>
-            Rispondi alla richiesta
-          </Link>
-        </div>
-      ) : null}
-
       {activeTab === "profilo" && (
         <div style={{ maxWidth: 1100, margin: "0 auto", padding: "20px 24px" }}>
 
@@ -1198,7 +1353,7 @@ export function RevampSupplierDashboardPage() {
         <div style={{ maxWidth: 1080, margin: "24px auto 32px", padding: "0 24px", width: "100%" }}>
           <div className="supplier-documents-head">
             <h3>Comunicazioni</h3>
-            <span className="supplier-documents-count">{communicationRows.length} aggiornamenti</span>
+            <span className="supplier-documents-count">{communicationCount} aggiornamenti</span>
           </div>
           <div className="supplier-communications-card">
             <div className="supplier-communications-top">
@@ -1210,13 +1365,26 @@ export function RevampSupplierDashboardPage() {
                 <MessageSquare size={19} />
               </div>
             </div>
-            {communicationRows.map((msg, i) => (
-              <div key={i} className="supplier-communication-row">
+            {communicationRows.map((msg, i) => {
+              const isOpenIntegrationRow = hasOpenIntegration && application && i === openIntegrationRowIndex;
+              return (
+              <div key={i} className={`supplier-communication-row${isOpenIntegrationRow ? " is-actionable" : ""}`}>
                 <div className="supplier-communication-marker" />
                 <span className="supplier-communication-date">{msg.date}</span>
-                <span className="supplier-communication-text">{msg.text}</span>
+                <span className="supplier-communication-text">
+                  <span>{msg.text}</span>
+                  {isOpenIntegrationRow ? (
+                    <span className="supplier-communication-action-meta">
+                      {integrationDueLabel ? <span>Scadenza: {integrationDueLabel}</span> : null}
+                      <button type="button" className="supplier-communication-row-btn" onClick={openIntegrationDrawer}>
+                        Rispondi
+                      </button>
+                    </span>
+                  ) : null}
+                </span>
               </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}

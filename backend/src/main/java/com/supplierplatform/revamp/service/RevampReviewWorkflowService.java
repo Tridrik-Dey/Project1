@@ -44,6 +44,7 @@ public class RevampReviewWorkflowService {
     private final RevampAuditService auditService;
     private final RevampGovernanceAuthorizationService governanceAuthorizationService;
     private final RevampProfileProjectionService profileProjectionService;
+    private final RevampIntegrationRequestMailService integrationRequestMailService;
     private final ObjectMapper objectMapper;
     private static final List<ReviewCaseStatus> FINAL_STATUSES = List.of(ReviewCaseStatus.DECIDED, ReviewCaseStatus.CLOSED);
 
@@ -264,6 +265,8 @@ public class RevampReviewWorkflowService {
                         + "\",\"actorName\":\"" + esc(actorName)
                         + "\",\"applicantName\":\"" + esc(application.getApplicantUser() != null ? application.getApplicantUser().getFullName() : "") + "\"}"
         ));
+
+        integrationRequestMailService.sendIntegrationRequestNotice(application, request);
 
         return reviewCaseMapper.toSummary(reviewCase);
     }

@@ -4,6 +4,7 @@ import { ArrowLeft, CheckCircle2, Clock, Copy, Edit2, Info, Mail, Send } from "l
 import { useAuth } from "../../auth/AuthContext";
 import { getRevampApplicationSections, submitRevampApplication } from "../../api/revampApplicationApi";
 import { getMissingRequiredSections } from "./revampFlow";
+import { loadRevampApplicationIdForRegistry } from "../../utils/revampApplicationSession";
 
 const GREEN = "#1a5c3a";
 const MUTED = "#6b7280";
@@ -138,7 +139,7 @@ export function RevampAlboBRecapPage() {
 
   useEffect(() => {
     if (!auth?.token) return;
-    const appId = sessionStorage.getItem("revamp_applicationId");
+    const appId = loadRevampApplicationIdForRegistry("ALBO_B");
     if (!appId) return;
     getRevampApplicationSections(appId, auth.token).then(sections => {
       setMissingSections(getMissingRequiredSections("ALBO_B", sections));
@@ -200,7 +201,7 @@ export function RevampAlboBRecapPage() {
     setSubmitError(null);
     setSubmitting(true);
     try {
-      const appId = sessionStorage.getItem("revamp_applicationId");
+      const appId = loadRevampApplicationIdForRegistry("ALBO_B");
       if (!appId || !auth?.token) {
         setSubmitError("Sessione non valida. Rientra nell'area fornitore e riprova.");
         setSubmitting(false);

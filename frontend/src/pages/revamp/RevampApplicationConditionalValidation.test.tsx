@@ -108,7 +108,7 @@ describe("Revamp FE Conditional Validation", () => {
     );
   });
 
-  it("Step2 ALBO_B requires RUNTS number when third sector type is set", async () => {
+  it("Step2 ALBO_B allows optional RUNTS number when third sector type is set", async () => {
     const user = userEvent.setup();
     getRevampApplicationSummaryMock.mockResolvedValue(appSummary("ALBO_B"));
     getRevampApplicationSectionsMock.mockResolvedValue([
@@ -131,12 +131,11 @@ describe("Revamp FE Conditional Validation", () => {
 
     await user.click(await screen.findByRole("button", { name: /Salva sezione/i }));
 
-    expect(await screen.findByText("Numero RUNTS obbligatorio se indicata tipologia terzo settore.")).toBeInTheDocument();
     expect(saveRevampApplicationSectionMock).toHaveBeenCalledWith(
       "app-1",
       "S2",
       expect.any(String),
-      false,
+      true,
       "test-token"
     );
   });

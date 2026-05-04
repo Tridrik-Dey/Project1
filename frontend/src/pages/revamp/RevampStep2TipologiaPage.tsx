@@ -2,7 +2,9 @@ import { ChangeEvent, useEffect, useState } from "react";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, ArrowRight, CheckCircle, Save } from "lucide-react";
 import { useAuth } from "../../auth/AuthContext";
-import { getMyLatestRevampApplication, getRevampApplicationSections, saveRevampApplicationSection } from "../../api/revampApplicationApi";
+import { answerRevampIntegrationRequest, getMyLatestRevampApplication, getRevampApplicationSections, saveRevampApplicationSection } from "../../api/revampApplicationApi";
+import { loadRevampApplicationIdForRegistry, saveRevampApplicationIdForRegistry } from "../../utils/revampApplicationSession";
+import { clearRevampIntegrationEditSession, isRevampIntegrationEditFor } from "../../utils/revampIntegrationEditSession";
 
 /* ─── colours ─────────────────────────────────── */
 const NAVY  = "#0f2a52";
@@ -222,6 +224,8 @@ export function RevampStep2TipologiaPage() {
   const accent = isA ? NAVY : GREEN;
   const title  = isA ? "Albo A — Professionisti" : "Albo B — Aziende";
   const cards  = isA ? CARDS_A : CARDS_B;
+  const registryType = isA ? "ALBO_A" : "ALBO_B";
+  const integrationEdit = isRevampIntegrationEditFor(registryType, 2);
 
   const [selected,       setSelected]       = useState<string | null>(null);
   const [secondaryRoles, setSecondaryRoles] = useState<Set<string>>(new Set());
@@ -245,19 +249,18 @@ export function RevampStep2TipologiaPage() {
       else if (s2.ateco)               setAtecoQuery(s2.ateco as string);
     }
 
-    const existingAppId = sessionStorage.getItem("revamp_applicationId");
+    const existingAppId = loadRevampApplicationIdForRegistry(registryType);
     if (existingAppId) {
       getRevampApplicationSections(existingAppId, auth.token).then(applyS2).catch(() => {});
       return;
     }
 
-    const expectedType = isA ? "ALBO_A" : "ALBO_B";
     getMyLatestRevampApplication(auth.token).then(app => {
-      if (!app || app.status !== "DRAFT" || app.registryType !== expectedType) return;
-      sessionStorage.setItem("revamp_applicationId", app.id);
+      if (!app || app.status !== "DRAFT" || app.registryType !== registryType) return;
+      saveRevampApplicationIdForRegistry(registryType, app.id);
       return getRevampApplicationSections(app.id, auth!.token!).then(applyS2);
     }).catch(() => {});
-  }, [auth?.token]);
+  }, [auth?.token, registryType]);
 
   function handleSave() {
     const now = new Date();
@@ -267,7 +270,7 @@ export function RevampStep2TipologiaPage() {
   async function handleSaveDraft() {
     if (!auth?.token) return;
     try {
-      const appId = sessionStorage.getItem("revamp_applicationId");
+      const appId = loadRevampApplicationIdForRegistry(registryType);
       if (!appId) return;
       const professionalType = professionalTypeForTipologia(selected);
       const secondaryProfessionalTypes = professionalTypesForTipologie(secondaryRoles);
@@ -301,10 +304,12 @@ export function RevampStep2TipologiaPage() {
     const ateco = atecoQuery;
     sessionStorage.setItem("revamp_tipologia", selected!);
     handleSave();
+    let savedAppId: string | null = null;
     if (auth?.token) {
       try {
-        const appId = sessionStorage.getItem("revamp_applicationId");
+        const appId = loadRevampApplicationIdForRegistry(registryType);
         if (appId) {
+          savedAppId = appId;
           const professionalType = professionalTypeForTipologia(selected);
           const secondaryProfessionalTypes = professionalTypesForTipologie(multiRuoli);
           await saveRevampApplicationSection(appId, "S2", JSON.stringify({
@@ -320,7 +325,16 @@ export function RevampStep2TipologiaPage() {
         return;
       }
     }
-    navigate(`/apply/${registryParam}/step/3`);
+    if (integrationEdit && auth?.token && savedAppId) {
+      try {
+        await answerRevampIntegrationRequest(savedAppId, auth.token);
+        clearRevampIntegrationEditSession();
+      } catch {
+        window.alert("Invio integrazione non riuscito. Controlla i dati e riprova.");
+        return;
+      }
+    }
+    navigate(integrationEdit?.returnPath ?? `/apply/${registryParam}/step/3`);
   }
 
   const info       = selected ? infoMessage(selected, isA) : null;
@@ -336,7 +350,13 @@ export function RevampStep2TipologiaPage() {
         badge={savedAt ? `Bozza salvata ${savedAt}` : "Salva bozza"}
         onSave={() => void handleSaveDraft()}
       />
-      <StepBar active={1} accent={accent} />
+      {integrationEdit ? (
+        <div style={{ background: "#eff6ff", borderBottom: "1px solid #bfdbfe", padding: "12px 40px", color: "#174f82", fontSize: "0.86rem", fontWeight: 700 }}>
+          Integrazione richiesta - Correggi la sezione Tipologia, salva e invia la risposta.
+        </div>
+      ) : (
+        <StepBar active={1} accent={accent} />
+      )}
 
       {/* ── Content ── */}
       <div style={{ maxWidth: 1120, margin: "24px auto", padding: "0 24px 100px" }}>
@@ -449,25 +469,29 @@ export function RevampStep2TipologiaPage() {
       {/* ── Bottom navigation ── */}
       <div className="wizard-bottom-nav" style={{ background: "#fff", borderTop: "1px solid #e5e7eb", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 40px", position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 10 }}>
         <Link className="wizard-nav-button wizard-nav-button-prev"
-          to={`/apply/${registryParam}`}
+          to={integrationEdit?.returnPath ?? `/apply/${registryParam}`}
           style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 20px", background: "#fff", border: `1.5px solid ${accent}`, borderRadius: 6, fontWeight: 600, fontSize: "0.85rem", color: accent, textDecoration: "none" }}
         >
-          <ArrowLeft size={15} /> Sezione precedente
+          <ArrowLeft size={15} /> {integrationEdit ? "Torna alla richiesta" : "Sezione precedente"}
         </Link>
 
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
-          <span style={{ fontSize: "0.78rem", color: MUTED }}>Avanzamento: <strong>40%</strong></span>
-          <div style={{ width: 200, height: 4, background: "#e5e7eb", borderRadius: 2, overflow: "hidden" }}>
-            <div style={{ width: "40%", height: "100%", background: accent, borderRadius: 2 }} />
+        {integrationEdit ? (
+          <div style={{ fontSize: "0.78rem", color: MUTED, fontWeight: 700 }}>Modalita integrazione</div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+            <span style={{ fontSize: "0.78rem", color: MUTED }}>Avanzamento: <strong>40%</strong></span>
+            <div style={{ width: 200, height: 4, background: "#e5e7eb", borderRadius: 2, overflow: "hidden" }}>
+              <div style={{ width: "40%", height: "100%", background: accent, borderRadius: 2 }} />
+            </div>
           </div>
-        </div>
+        )}
 
         <button className="wizard-nav-button wizard-nav-button-next"
           type="button"
           onClick={handleNext}
           style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 20px", background: accent, color: "#fff", border: "none", borderRadius: 6, fontWeight: 600, fontSize: "0.85rem", cursor: "pointer" }}
         >
-          Sezione successiva <ArrowRight size={15} />
+          {integrationEdit ? "Salva e invia integrazione" : "Sezione successiva"} <ArrowRight size={15} />
         </button>
       </div>
 

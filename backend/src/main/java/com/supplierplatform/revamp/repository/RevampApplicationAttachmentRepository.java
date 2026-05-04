@@ -12,4 +12,5 @@ public interface RevampApplicationAttachmentRepository extends JpaRepository<Rev
     List<RevampApplicationAttachment> findByApplicationIdAndSectionKey(UUID applicationId, String sectionKey);
     Optional<RevampApplicationAttachment> findFirstByApplicationIdAndStorageKey(UUID applicationId, String storageKey);
     void deleteByApplicationIdAndSectionKey(UUID applicationId, String sectionKey);
+    void deleteByApplicationId(UUID applicationId);
 }

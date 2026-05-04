@@ -47,6 +47,12 @@ export interface RevampIntegrationRequestSummary {
   updatedAt: string;
 }
 
+export interface RevampIdentityAvailability {
+  available: boolean;
+  field: "taxCode" | "vatNumber" | string;
+  messageKey: string | null;
+}
+
 export interface OtpChallengeDispatchResponse {
   challengeId: string;
   expiresAt: string;
@@ -111,6 +117,31 @@ export function getRevampApplicationSections(
   token: string
 ): Promise<RevampSectionSnapshot[]> {
   return apiRequest<RevampSectionSnapshot[]>(`${BASE}/${applicationId}/sections`, {}, token);
+}
+
+export function deleteRevampApplicationDraft(
+  applicationId: string,
+  token: string
+): Promise<void> {
+  return apiRequest<void>(
+    `${BASE}/${applicationId}/draft`,
+    { method: "DELETE" },
+    token
+  );
+}
+
+export function checkRevampIdentityAvailability(
+  applicationId: string,
+  field: "taxCode" | "vatNumber" | "piva",
+  value: string,
+  token: string
+): Promise<RevampIdentityAvailability> {
+  const params = new URLSearchParams({ field, value });
+  return apiRequest<RevampIdentityAvailability>(
+    `${BASE}/${applicationId}/identity/check?${params.toString()}`,
+    {},
+    token
+  );
 }
 
 export function getRevampApplicationCommunications(
@@ -178,6 +209,17 @@ export function submitRevampApplication(
 ): Promise<RevampApplicationSummary> {
   return apiRequest<RevampApplicationSummary>(
     `${BASE}/${applicationId}/submit`,
+    { method: "POST" },
+    token
+  );
+}
+
+export function answerRevampIntegrationRequest(
+  applicationId: string,
+  token: string
+): Promise<RevampApplicationSummary> {
+  return apiRequest<RevampApplicationSummary>(
+    `${BASE}/${applicationId}/integration-response`,
     { method: "POST" },
     token
   );

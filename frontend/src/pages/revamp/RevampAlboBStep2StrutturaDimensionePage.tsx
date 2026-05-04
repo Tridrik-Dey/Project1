@@ -1,8 +1,11 @@
 import { ChangeEvent, useEffect, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import { ArrowLeft, ArrowRight, CheckCircle, Save } from "lucide-react";
+import { ArrowLeft, ArrowRight, CheckCircle, Info, Save } from "lucide-react";
 import { useAuth } from "../../auth/AuthContext";
-import { getMyLatestRevampApplication, getRevampApplicationSections, saveRevampApplicationSection } from "../../api/revampApplicationApi";
+import { answerRevampIntegrationRequest, getMyLatestRevampApplication, getRevampApplicationSections, saveRevampApplicationSection } from "../../api/revampApplicationApi";
+import { loadRevampApplicationIdForRegistry, saveRevampApplicationIdForRegistry } from "../../utils/revampApplicationSession";
+import { clearRevampIntegrationEditSession, isRevampIntegrationEditFor } from "../../utils/revampIntegrationEditSession";
+import { ATECO_FORMAT_ERROR, isValidAtecoCode, normalizeAtecoCode } from "../../utils/atecoValidation";
 
 const GREEN = "#1a5c3a";
 const MUTED = "#6b7280";
@@ -110,9 +113,35 @@ function SelectField({ label, required, value, onChange, options, error }: {
   );
 }
 
+function ErrorTooltip({ message }: { message: string }) {
+  const [showTip, setShowTip] = useState(false);
+  return (
+    <span
+      style={{ position: "relative", display: "inline-flex", alignItems: "center" }}
+      onMouseEnter={() => setShowTip(true)}
+      onMouseLeave={() => setShowTip(false)}
+      onFocus={() => setShowTip(true)}
+      onBlur={() => setShowTip(false)}
+      tabIndex={0}
+    >
+      <Info size={13} style={{ color: ERR, cursor: "help" }} />
+      {showTip ? (
+        <span style={{
+          position: "absolute", bottom: "calc(100% + 6px)", left: "50%",
+          transform: "translateX(-50%)", background: "#991b1b", color: "#fff",
+          fontSize: "0.72rem", padding: "5px 8px", borderRadius: 4,
+          whiteSpace: "nowrap", pointerEvents: "none", zIndex: 100,
+          boxShadow: "0 8px 20px rgba(153, 27, 27, 0.22)"
+        }}>{message}</span>
+      ) : null}
+    </span>
+  );
+}
+
 export function RevampAlboBStep2StrutturaDimensionePage() {
   const navigate = useNavigate();
   const { auth } = useAuth();
+  const integrationEdit = isRevampIntegrationEditFor("ALBO_B", 2);
 
   const [dipendenti,     setDipendenti]     = useState("");
   const [fatturato,      setFatturato]      = useState("");
@@ -156,7 +185,7 @@ export function RevampAlboBStep2StrutturaDimensionePage() {
       if (s2.runts)                               setRunts(s2.runts as string);
     }
 
-    const existingAppId = sessionStorage.getItem("revamp_applicationId");
+    const existingAppId = loadRevampApplicationIdForRegistry("ALBO_B");
     if (existingAppId) {
       getRevampApplicationSections(existingAppId, auth.token).then(applyS2).catch(() => {});
       return;
@@ -164,7 +193,7 @@ export function RevampAlboBStep2StrutturaDimensionePage() {
 
     getMyLatestRevampApplication(auth.token).then(app => {
       if (!app || app.status !== "DRAFT" || app.registryType !== "ALBO_B") return;
-      sessionStorage.setItem("revamp_applicationId", app.id);
+      saveRevampApplicationIdForRegistry("ALBO_B", app.id);
       return getRevampApplicationSections(app.id, auth!.token!).then(applyS2);
     }).catch(() => {});
   }, [auth?.token]);
@@ -181,12 +210,23 @@ export function RevampAlboBStep2StrutturaDimensionePage() {
   }
   function setAtecoSecItem(idx: number, val: string) {
     setAtecoSec(prev => { const n = [...prev]; n[idx] = val; return n; });
+    const key = `atecoSec_${idx}`;
+    setErrors(prev => {
+      const n = { ...prev };
+      if (val.trim() && !isValidAtecoCode(val)) n[key] = ATECO_FORMAT_ERROR;
+      else delete n[key];
+      return n;
+    });
   }
 
   function validate(): Record<string, string> {
     const e: Record<string, string> = {};
     if (!dipendenti) e.dipendenti = "Campo obbligatorio.";
     if (!atecoMain.trim()) e.atecoMain = "Campo obbligatorio.";
+    else if (!isValidAtecoCode(atecoMain)) e.atecoMain = ATECO_FORMAT_ERROR;
+    atecoSec.forEach((value, index) => {
+      if (value.trim() && !isValidAtecoCode(value)) e[`atecoSec_${index}`] = ATECO_FORMAT_ERROR;
+    });
     if (regioni.size === 0) e.regioni = "Seleziona almeno una regione di operatività.";
     if (!accreditato) e.accreditato = "Campo obbligatorio.";
     if (accreditato === "si" && accRegioni.size === 0) e.accRegioni = "Seleziona almeno una regione di accreditamento.";
@@ -204,11 +244,11 @@ export function RevampAlboBStep2StrutturaDimensionePage() {
   async function handleSaveDraft() {
     if (!auth?.token) return;
     try {
-      const appId = sessionStorage.getItem("revamp_applicationId");
+      const appId = loadRevampApplicationIdForRegistry("ALBO_B");
       if (!appId) return;
       await saveRevampApplicationSection(appId, "S2", JSON.stringify({
-        dipendenti, fatturato, atecoMain,
-        atecoSecondari: atecoSec.filter(Boolean),
+        dipendenti, fatturato, atecoMain: normalizeAtecoCode(atecoMain),
+        atecoSecondari: atecoSec.map(normalizeAtecoCode).filter(Boolean),
         regioni: Array.from(regioni),
         accreditatoFormazione: accreditato,
         accreditamentoRegioni: Array.from(accRegioni),
@@ -224,8 +264,8 @@ export function RevampAlboBStep2StrutturaDimensionePage() {
     if (Object.keys(errs).length) { setErrors(errs); return; }
     handleSave();
     const payload = {
-      dipendenti, fatturato, atecoMain,
-      atecoSecondari: atecoSec.filter(Boolean),
+      dipendenti, fatturato, atecoMain: normalizeAtecoCode(atecoMain),
+      atecoSecondari: atecoSec.map(normalizeAtecoCode).filter(Boolean),
       regioni: Array.from(regioni),
       accreditatoFormazione: accreditato,
       accreditamentoRegioni: Array.from(accRegioni),
@@ -233,10 +273,12 @@ export function RevampAlboBStep2StrutturaDimensionePage() {
       isTerzoSettore, tipoEts, runts,
     };
     sessionStorage.setItem("revamp_b2", JSON.stringify(payload));
+    let savedAppId: string | null = null;
     if (auth?.token) {
       try {
-        const appId = sessionStorage.getItem("revamp_applicationId");
+        const appId = loadRevampApplicationIdForRegistry("ALBO_B");
         if (appId) {
+          savedAppId = appId;
           const EMP_MAP: Record<string, string> = {
             solo_titolare: "E_1_9", "2_5": "E_1_9",
             "6_15": "E_10_49", "16_50": "E_10_49",
@@ -245,7 +287,8 @@ export function RevampAlboBStep2StrutturaDimensionePage() {
           const apiPayload = {
             ...payload,
             employeeRange:    EMP_MAP[dipendenti] ?? dipendenti,
-            atecoPrimary:     atecoMain,
+            atecoPrimary:     normalizeAtecoCode(atecoMain),
+            atecoSecondary:   atecoSec.map(normalizeAtecoCode).filter(Boolean),
             revenueBand:      fatturato,
             operatingRegions: Array.from(regioni).map(r => ({ region: r })),
             thirdSectorType:  isTerzoSettore === "si" ? tipoEts : undefined,
@@ -258,7 +301,16 @@ export function RevampAlboBStep2StrutturaDimensionePage() {
         return;
       }
     }
-    navigate("/apply/albo-b/step/3");
+    if (integrationEdit && auth?.token && savedAppId) {
+      try {
+        await answerRevampIntegrationRequest(savedAppId, auth.token);
+        clearRevampIntegrationEditSession();
+      } catch {
+        window.alert("Invio integrazione non riuscito. Controlla i dati e riprova.");
+        return;
+      }
+    }
+    navigate(integrationEdit?.returnPath ?? "/apply/albo-b/step/3");
   }
 
   const errorCount = Object.keys(errors).length;
@@ -282,7 +334,13 @@ export function RevampAlboBStep2StrutturaDimensionePage() {
         </button>
       </div>
 
-      <StepBar active={1} />
+      {integrationEdit ? (
+        <div style={{ background: "#eff6ff", borderBottom: "1px solid #bfdbfe", padding: "12px 40px", color: "#174f82", fontSize: "0.86rem", fontWeight: 700 }}>
+          Integrazione richiesta - Correggi questa sezione, salva e invia la risposta.
+        </div>
+      ) : (
+        <StepBar active={1} />
+      )}
 
       <div style={{ maxWidth: 1040, margin: "28px auto", padding: "0 24px 120px" }}>
         <div style={{ background: "#fff", borderRadius: 10, border: "1px solid #e5e7eb", padding: "28px 32px" }}>
@@ -300,19 +358,34 @@ export function RevampAlboBStep2StrutturaDimensionePage() {
           {/* ATECO */}
           <SectionLabel label="Codici ATECO" />
           <div style={{ marginBottom: 12 }}>
-            <span style={lbl}>Codice ATECO principale <span style={{ color: ERR }}>*</span></span>
+            <span style={{ ...lbl, display: "flex", alignItems: "center", gap: 4 }}>
+              Codice ATECO principale <span style={{ color: ERR }}>*</span>
+              {errors.atecoMain === ATECO_FORMAT_ERROR ? <ErrorTooltip message={errors.atecoMain} /> : null}
+            </span>
             <input
-              value={atecoMain} onChange={e => { setAtecoMain(e.target.value); if (errors.atecoMain) setErrors(p => { const n={...p}; delete n.atecoMain; return n; }); }}
+              value={atecoMain} onChange={e => {
+                const value = e.target.value;
+                setAtecoMain(value);
+                setErrors(p => {
+                  const n = { ...p };
+                  if (value.trim() && !isValidAtecoCode(value)) n.atecoMain = ATECO_FORMAT_ERROR;
+                  else delete n.atecoMain;
+                  return n;
+                });
+              }}
               placeholder="Es. 85.59 — Altre attività di istruzione n.c.a."
               style={{ ...baseInput(!!errors.atecoMain), marginTop: 4 }}
             />
-            {errors.atecoMain ? <span style={errTxt}>{errors.atecoMain}</span> : null}
+            {errors.atecoMain && errors.atecoMain !== ATECO_FORMAT_ERROR ? <span style={errTxt}>{errors.atecoMain}</span> : null}
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 16 }}>
             {[0,1,2].map(i => (
               <div key={i} style={col}>
-                <span style={lbl}>ATECO secondario {i+1} <span style={{ fontWeight: 400, color: MUTED }}>(opzionale)</span></span>
-                <input value={atecoSec[i]} onChange={e => setAtecoSecItem(i, e.target.value)} placeholder={`Codice ATECO secondario ${i+1}`} style={baseInput()} />
+                <span style={{ ...lbl, display: "flex", alignItems: "center", gap: 4 }}>
+                  ATECO secondario {i+1} <span style={{ fontWeight: 400, color: MUTED }}>(opzionale)</span>
+                  {errors[`atecoSec_${i}`] === ATECO_FORMAT_ERROR ? <ErrorTooltip message={errors[`atecoSec_${i}`]} /> : null}
+                </span>
+                <input value={atecoSec[i]} onChange={e => setAtecoSecItem(i, e.target.value)} placeholder={`Codice ATECO secondario ${i+1}`} style={baseInput(!!errors[`atecoSec_${i}`])} />
               </div>
             ))}
           </div>
@@ -416,17 +489,21 @@ export function RevampAlboBStep2StrutturaDimensionePage() {
 
       {/* Bottom nav */}
       <div className="wizard-bottom-nav" style={{ background: "#fff", borderTop: "1px solid #e5e7eb", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 40px", position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 10 }}>
-        <Link className="wizard-nav-button wizard-nav-button-prev" to="/apply/albo-b" style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 20px", background: "#fff", border: `1.5px solid ${GREEN}`, borderRadius: 6, fontWeight: 600, fontSize: "0.85rem", color: GREEN, textDecoration: "none" }}>
-          <ArrowLeft size={15} /> Sezione precedente
+        <Link className="wizard-nav-button wizard-nav-button-prev" to={integrationEdit?.returnPath ?? "/apply/albo-b"} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 20px", background: "#fff", border: `1.5px solid ${GREEN}`, borderRadius: 6, fontWeight: 600, fontSize: "0.85rem", color: GREEN, textDecoration: "none" }}>
+          <ArrowLeft size={15} /> {integrationEdit ? "Torna alla richiesta" : "Sezione precedente"}
         </Link>
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
-          <span style={{ fontSize: "0.78rem", color: MUTED }}>Avanzamento: <strong>40%</strong></span>
-          <div style={{ width: 200, height: 4, background: "#e5e7eb", borderRadius: 2, overflow: "hidden" }}>
-            <div style={{ width: "40%", height: "100%", background: GREEN, borderRadius: 2 }} />
+        {integrationEdit ? (
+          <div style={{ fontSize: "0.82rem", color: MUTED, fontWeight: 700 }}>Modalita integrazione</div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+            <span style={{ fontSize: "0.78rem", color: MUTED }}>Avanzamento: <strong>40%</strong></span>
+            <div style={{ width: 200, height: 4, background: "#e5e7eb", borderRadius: 2, overflow: "hidden" }}>
+              <div style={{ width: "40%", height: "100%", background: GREEN, borderRadius: 2 }} />
+            </div>
           </div>
-        </div>
+        )}
         <button className="wizard-nav-button wizard-nav-button-next" type="button" onClick={() => void handleNext()} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 20px", background: GREEN, color: "#fff", border: "none", borderRadius: 6, fontWeight: 600, fontSize: "0.85rem", cursor: "pointer" }}>
-          Sezione successiva <ArrowRight size={15} />
+          {integrationEdit ? "Salva e invia integrazione" : "Sezione successiva"} <ArrowRight size={15} />
         </button>
       </div>
     </div>

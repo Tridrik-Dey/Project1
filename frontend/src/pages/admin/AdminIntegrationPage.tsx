@@ -11,61 +11,30 @@ import {
   type AdminIntegrationRequestSummary,
   type AdminReviewCaseSummary
 } from "../../api/adminReviewApi";
-import { getRevampApplicationSummary, type RevampApplicationSummary } from "../../api/revampApplicationApi";
+import {
+  getRevampApplicationSections,
+  getRevampApplicationSummary,
+  type RevampApplicationSummary,
+  type RevampSectionSnapshot
+} from "../../api/revampApplicationApi";
 import { useAuth } from "../../auth/AuthContext";
 import { AppToast } from "../../components/ui/toast";
 import { useAdminGovernanceRole } from "../../hooks/useAdminGovernanceRole";
 import { useAdminRealtimeRefresh } from "../../hooks/useAdminRealtimeRefresh";
+import { buildRevampIntegrationItemTemplates, type RevampIntegrationItemTemplate } from "../../utils/revampIntegrationItems";
 import { AdminCandidatureShell } from "./AdminCandidatureShell";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-type IntegrationItemCode =
-  | "ID_DOCUMENT"
-  | "PROFESSIONAL_REGISTER"
-  | "THEMATIC_SPECIFICATION"
-  | "EXPERIENCE_CONSISTENCY"
-  | "CV_UPDATE";
-
-interface IntegrationItemTemplate {
-  code: IntegrationItemCode;
-  label: string;
-  hint: string;
-}
-
 interface SelectedIntegrationItem {
-  code: IntegrationItemCode;
+  code: string;
   label: string;
   instruction: string;
+  documentType?: string;
+  certificationKey?: string;
+  certificationLabel?: string;
+  targetStep: number;
 }
-
-const ITEM_TEMPLATES: IntegrationItemTemplate[] = [
-  {
-    code: "ID_DOCUMENT",
-    label: "Documento di identita",
-    hint: "Allegare un documento di identita valido e leggibile."
-  },
-  {
-    code: "PROFESSIONAL_REGISTER",
-    label: "Visura/iscrizione ordine professionale",
-    hint: "Fornire iscrizione all'albo o ordine di appartenenza (se applicabile)."
-  },
-  {
-    code: "THEMATIC_SPECIFICATION",
-    label: "Specifica delle tematiche",
-    hint: "Dettagliare meglio competenze e ambiti dichiarati nella candidatura."
-  },
-  {
-    code: "EXPERIENCE_CONSISTENCY",
-    label: "Anni di esperienza coerenti",
-    hint: "Verificare e correggere eventuali incoerenze nel numero di anni dichiarati."
-  },
-  {
-    code: "CV_UPDATE",
-    label: "Curriculum aggiornato",
-    hint: "Caricare CV aggiornato con evidenza delle esperienze recenti."
-  }
-];
 
 function appCode(applicationId: string): string {
   return `A-${applicationId.slice(0, 8).toUpperCase()}`;
@@ -88,16 +57,11 @@ export function AdminIntegrationPage() {
   const { adminRole } = useAdminGovernanceRole();
 
   const [summary, setSummary] = useState<RevampApplicationSummary | null>(null);
+  const [sections, setSections] = useState<RevampSectionSnapshot[]>([]);
   const [history, setHistory] = useState<AdminReviewCaseSummary[]>([]);
   const [latestIntegrationRequest, setLatestIntegrationRequest] = useState<AdminIntegrationRequestSummary | null>(null);
-  const [selectedCodes, setSelectedCodes] = useState<Set<IntegrationItemCode>>(new Set());
-  const [instructions, setInstructions] = useState<Record<IntegrationItemCode, string>>({
-    ID_DOCUMENT: "",
-    PROFESSIONAL_REGISTER: "",
-    THEMATIC_SPECIFICATION: "",
-    EXPERIENCE_CONSISTENCY: "",
-    CV_UPDATE: ""
-  });
+  const [selectedCodes, setSelectedCodes] = useState<Set<string>>(new Set());
+  const [instructions, setInstructions] = useState<Record<string, string>>({});
   const [integrationDueAt, setIntegrationDueAt] = useState("");
   const [integrationMessage, setIntegrationMessage] = useState("");
   const [loading, setLoading] = useState(false);
@@ -114,15 +78,23 @@ export function AdminIntegrationPage() {
   const canRequestIntegration = adminRole === "SUPER_ADMIN" || adminRole === "RESPONSABILE_ALBO" || adminRole === "REVISORE";
   const hasOpenIntegration = latestIntegrationRequest?.status === "OPEN";
   const selectedCount = selectedCodes.size;
+  const itemTemplates = useMemo<RevampIntegrationItemTemplate[]>(
+    () => buildRevampIntegrationItemTemplates(summary, sections),
+    [sections, summary]
+  );
 
   const selectedItems = useMemo<SelectedIntegrationItem[]>(
     () =>
-      ITEM_TEMPLATES.filter((template) => selectedCodes.has(template.code)).map((template) => ({
+      itemTemplates.filter((template) => selectedCodes.has(template.code)).map((template) => ({
         code: template.code,
         label: template.label,
-        instruction: instructions[template.code].trim()
+        instruction: (instructions[template.code] ?? "").trim(),
+        documentType: template.documentType,
+        certificationKey: template.certificationKey,
+        certificationLabel: template.certificationLabel,
+        targetStep: template.targetStep
       })),
-    [instructions, selectedCodes]
+    [instructions, itemTemplates, selectedCodes]
   );
 
   const emailPreview = useMemo(() => {
@@ -161,11 +133,14 @@ export function AdminIntegrationPage() {
     integrationRefreshInFlightRef.current = true;
     if (showLoading) setLoading(true);
     try {
-      const [summaryData, historyData] = await Promise.all([
+      const [summaryData, historyData, sectionsData] = await Promise.all([
         getRevampApplicationSummary(normalizedAppId, token),
-        getAdminReviewHistory(normalizedAppId, token)
+        getAdminReviewHistory(normalizedAppId, token),
+        getRevampApplicationSections(normalizedAppId, token)
       ]);
       setSummary(summaryData);
+      setSections(sectionsData);
+      const nextTemplates = buildRevampIntegrationItemTemplates(summaryData, sectionsData);
       const sortedHistory = [...historyData].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
       setHistory(sortedHistory);
       const latestCaseId = sortedHistory[0]?.id;
@@ -177,17 +152,11 @@ export function AdminIntegrationPage() {
             setIntegrationDueAt(latestReq.dueAt.slice(0, 10));
             setIntegrationMessage(latestReq.requestMessage ?? "");
             const payload = latestReq.requestedItemsJson as { items?: Array<{ code?: string; instruction?: string }> } | null;
-            const nextCodes = new Set<IntegrationItemCode>();
-            const nextInstructions: Record<IntegrationItemCode, string> = {
-              ID_DOCUMENT: "",
-              PROFESSIONAL_REGISTER: "",
-              THEMATIC_SPECIFICATION: "",
-              EXPERIENCE_CONSISTENCY: "",
-              CV_UPDATE: ""
-            };
+            const nextCodes = new Set<string>();
+            const nextInstructions: Record<string, string> = {};
             (payload?.items ?? []).forEach((item) => {
-              const code = item.code as IntegrationItemCode;
-              if (code && ITEM_TEMPLATES.some((template) => template.code === code)) {
+              const code = typeof item.code === "string" ? item.code : "";
+              if (code && nextTemplates.some((template) => template.code === code)) {
                 nextCodes.add(code);
                 nextInstructions[code] = (item.instruction ?? "").trim();
               }
@@ -205,6 +174,7 @@ export function AdminIntegrationPage() {
       const message = error instanceof HttpError ? error.message : "Caricamento dati integrazione non riuscito.";
       setToast({ message, type: "error" });
       setSummary(null);
+      setSections([]);
       setHistory([]);
       setLatestIntegrationRequest(null);
     } finally {
@@ -245,7 +215,7 @@ export function AdminIntegrationPage() {
     }
   }
 
-  function toggleItem(code: IntegrationItemCode) {
+  function toggleItem(code: string) {
     setSelectedCodes((prev) => {
       const next = new Set(prev);
       if (next.has(code)) next.delete(code);
@@ -361,7 +331,7 @@ export function AdminIntegrationPage() {
             </div>
 
             <div className="admin-integration-items">
-              {ITEM_TEMPLATES.map((item) => {
+              {itemTemplates.map((item) => {
                 const checked = selectedCodes.has(item.code);
                 return (
                   <article
@@ -393,7 +363,7 @@ export function AdminIntegrationPage() {
                     <p className="subtle">{item.hint}</p>
                     <input
                       className="floating-input integration-item-input"
-                      value={instructions[item.code]}
+                      value={instructions[item.code] ?? ""}
                       onChange={(event) =>
                         setInstructions((prev) => ({
                           ...prev,

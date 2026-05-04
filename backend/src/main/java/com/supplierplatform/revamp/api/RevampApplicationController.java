@@ -8,6 +8,7 @@ import com.supplierplatform.revamp.api.dto.SaveApplicationSectionRequest;
 import com.supplierplatform.revamp.dto.RevampApplicationSummaryDto;
 import com.supplierplatform.revamp.dto.RevampApplicationCommunicationDto;
 import com.supplierplatform.revamp.dto.RevampIntegrationRequestSummaryDto;
+import com.supplierplatform.revamp.dto.RevampIdentityAvailabilityDto;
 import com.supplierplatform.revamp.dto.RevampSectionSnapshotDto;
 import com.supplierplatform.revamp.dto.RevampEvaluationAggregateDto;
 import com.supplierplatform.revamp.service.RevampApplicationAttachmentDownloadService;
@@ -83,6 +84,24 @@ public class RevampApplicationController {
         return ResponseEntity.ok(ApiResponse.ok(applicationService.getLatestSections(applicationId)));
     }
 
+    @GetMapping("/{applicationId}/identity/check")
+    public ResponseEntity<ApiResponse<RevampIdentityAvailabilityDto>> checkIdentityAvailability(
+            @PathVariable UUID applicationId,
+            @RequestParam String field,
+            @RequestParam String value
+    ) {
+        revampAccessGuard.requireReadEnabled();
+        return ResponseEntity.ok(ApiResponse.ok(applicationService.checkIdentityAvailability(applicationId, field, value)));
+    }
+
+    @DeleteMapping("/{applicationId}/draft")
+    public ResponseEntity<ApiResponse<Void>> deleteOwnDraft(@PathVariable UUID applicationId) {
+        revampAccessGuard.requireWriteEnabled();
+        User currentUser = getCurrentUser();
+        applicationService.deleteOwnDraft(applicationId, currentUser.getId());
+        return ResponseEntity.ok(ApiResponse.ok("Draft deleted", null));
+    }
+
     @GetMapping("/{applicationId}/communications")
     public ResponseEntity<ApiResponse<List<RevampApplicationCommunicationDto>>> getCommunications(@PathVariable UUID applicationId) {
         revampAccessGuard.requireReadEnabled();
@@ -148,6 +167,16 @@ public class RevampApplicationController {
     public ResponseEntity<ApiResponse<RevampApplicationSummaryDto>> submit(@PathVariable UUID applicationId) {
         revampAccessGuard.requireWriteEnabled();
         return ResponseEntity.ok(ApiResponse.ok("Application submitted", applicationService.submit(applicationId)));
+    }
+
+    @PostMapping("/{applicationId}/integration-response")
+    public ResponseEntity<ApiResponse<RevampApplicationSummaryDto>> answerIntegration(@PathVariable UUID applicationId) {
+        revampAccessGuard.requireWriteEnabled();
+        User currentUser = getCurrentUser();
+        return ResponseEntity.ok(ApiResponse.ok(
+                "Integration response submitted",
+                applicationService.answerIntegration(applicationId, currentUser.getId())
+        ));
     }
 
     private User getCurrentUser() {

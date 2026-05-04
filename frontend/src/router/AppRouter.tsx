@@ -1,5 +1,5 @@
-﻿import { Suspense, lazy } from "react";
-import { Navigate, Route, Routes } from "react-router-dom";
+﻿import { Suspense, lazy, useEffect, useState } from "react";
+import { Navigate, Route, Routes, useLocation, useParams } from "react-router-dom";
 import { AppLayout } from "../components/layout/AppLayout";
 import { RequireAuth } from "../auth/RequireAuth";
 import { useAuth } from "../auth/AuthContext";
@@ -7,6 +7,7 @@ import { featureFlags } from "../config/featureFlags";
 import { useAdminGovernanceRole } from "../hooks/useAdminGovernanceRole";
 import type { AdminRole } from "../api/adminUsersRolesApi";
 import { isRevampEmailVerified } from "../utils/revampEmailVerification";
+import { getMyLatestRevampApplication, getRevampApplicationSummary, type RevampApplicationSummary } from "../api/revampApplicationApi";
 
 const LoginPage = lazy(() => import("../pages/auth/LoginPage").then((m) => ({ default: m.LoginPage })));
 const RegisterPage = lazy(() => import("../pages/auth/RegisterPage").then((m) => ({ default: m.RegisterPage })));
@@ -58,11 +59,79 @@ const AdminRegistryProfileDetailPage = lazy(() => import("../pages/admin/AdminRe
 
 function RequireRevampOtpForSupplier({ children }: { children: JSX.Element }) {
   const { auth } = useAuth();
+  const location = useLocation();
+  const path = location.pathname;
+  const guardsDraftOnly =
+    path.startsWith("/apply")
+    || (/^\/application\/[^/]+\/(step\/[1-5]|recap)$/.test(path));
 
   if (!featureFlags.newWizardAb) return children;
   if (!auth || auth.role !== "SUPPLIER") return children;
-  if (auth.emailVerified || isRevampEmailVerified()) return children;
-  return <Navigate to="/verify-otp" replace />;
+  if (!auth.emailVerified && !isRevampEmailVerified()) return <Navigate to="/verify-otp" replace />;
+  if (guardsDraftOnly) {
+    return (
+      <RequireRevampDraftForWizard useRouteApplicationId={path.startsWith("/application/")}>
+        {children}
+      </RequireRevampDraftForWizard>
+    );
+  }
+  return children;
+}
+
+function submittedDestination(summary: RevampApplicationSummary): string {
+  if (summary.status === "INTEGRATION_REQUIRED" || summary.status === "WAITING_SUPPLIER_RESPONSE") return `/application/${summary.id}/integration-request`;
+  if (summary.status === "SUBMITTED" || summary.status === "UNDER_REVIEW" || summary.status === "IN_REVIEW") return `/application/${summary.id}/submitted`;
+  return "/supplier/dashboard";
+}
+
+function RequireRevampDraftForWizard({ children, useRouteApplicationId = false }: { children: JSX.Element; useRouteApplicationId?: boolean }) {
+  const { auth } = useAuth();
+  const { applicationId } = useParams();
+  const location = useLocation();
+  const [redirectTo, setRedirectTo] = useState<string | null>(null);
+  const [checking, setChecking] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function checkDraftAccess() {
+      if (!featureFlags.newWizardAb || !auth?.token || auth.role !== "SUPPLIER") {
+        if (!cancelled) setChecking(false);
+        return;
+      }
+      setChecking(true);
+      try {
+        const summary = useRouteApplicationId && applicationId
+          ? await getRevampApplicationSummary(applicationId, auth.token)
+          : await getMyLatestRevampApplication(auth.token);
+        if (!cancelled) {
+          const canEditIntegrationApplication =
+            summary?.status === "INTEGRATION_REQUIRED"
+            && (useRouteApplicationId || location.pathname.startsWith("/apply/"));
+          setRedirectTo(summary && summary.status !== "DRAFT" && !canEditIntegrationApplication ? submittedDestination(summary) : null);
+        }
+      } catch {
+        if (!cancelled) setRedirectTo(null);
+      } finally {
+        if (!cancelled) setChecking(false);
+      }
+    }
+    void checkDraftAccess();
+    return () => {
+      cancelled = true;
+    };
+  }, [applicationId, auth?.role, auth?.token, location.pathname, useRouteApplicationId]);
+
+  if (checking) {
+    return (
+      <section className="stack">
+        <div className="panel">
+          <h2>Verifica stato candidatura...</h2>
+        </div>
+      </section>
+    );
+  }
+  if (redirectTo) return <Navigate to={redirectTo} replace />;
+  return children;
 }
 
 function RequireAdminGovernanceRoles({

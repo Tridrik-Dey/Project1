@@ -75,3 +75,8 @@ app:
       admin-v2: ${FEATURE_ADMIN_V2:true}
       evaluation-v2: ${FEATURE_EVALUATION_V2:true}
       renewal-v2: ${FEATURE_RENEWAL_V2:true}
+  revamp:
+    draft-cleanup:
+      enabled: ${REVAMP_DRAFT_CLEANUP_ENABLED:true}
+      max-age-days: ${REVAMP_DRAFT_CLEANUP_MAX_AGE_DAYS:30}
+      cron: ${REVAMP_DRAFT_CLEANUP_CRON:0 30 2 * * *}

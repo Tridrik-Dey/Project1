@@ -2,7 +2,9 @@ import { ChangeEvent, useEffect, useState } from "react";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, ArrowRight, CheckCircle, Info, Save } from "lucide-react";
 import { useAuth } from "../../auth/AuthContext";
-import { getMyLatestRevampApplication, getRevampApplicationSections, saveRevampApplicationSection } from "../../api/revampApplicationApi";
+import { answerRevampIntegrationRequest, getMyLatestRevampApplication, getRevampApplicationSections, saveRevampApplicationSection } from "../../api/revampApplicationApi";
+import { loadRevampApplicationIdForRegistry, saveRevampApplicationIdForRegistry } from "../../utils/revampApplicationSession";
+import { clearRevampIntegrationEditSession, isRevampIntegrationEditFor } from "../../utils/revampIntegrationEditSession";
 
 const NAVY  = "#0f2a52";
 const GREEN = "#1a5c3a";
@@ -251,6 +253,8 @@ export function RevampStep3CompetenzePage() {
   const isDocente = isA && tipologia === "docente";
   const accent = isA ? NAVY : GREEN;
   const title = isA ? "Albo A — Professionisti" : "Albo B — Aziende";
+  const registryType = isA ? "ALBO_A" : "ALBO_B";
+  const integrationEdit = isRevampIntegrationEditFor(registryType, 3);
   const subtitle = isDocente
     ? "Sezione 3A · Scheda Docente / Formatore"
     : "Sezione 3 · Profilo Professionale";
@@ -318,19 +322,18 @@ export function RevampStep3CompetenzePage() {
       if (s3.certB)             setCertB(s3.certB as string);
     }
 
-    const existingAppId = sessionStorage.getItem("revamp_applicationId");
+    const existingAppId = loadRevampApplicationIdForRegistry(registryType);
     if (existingAppId) {
       getRevampApplicationSections(existingAppId, auth.token).then(applyS3).catch(() => {});
       return;
     }
 
-    const expectedType = isA ? "ALBO_A" : "ALBO_B";
     getMyLatestRevampApplication(auth.token).then(app => {
-      if (!app || app.status !== "DRAFT" || app.registryType !== expectedType) return;
-      sessionStorage.setItem("revamp_applicationId", app.id);
+      if (!app || app.status !== "DRAFT" || app.registryType !== registryType) return;
+      saveRevampApplicationIdForRegistry(registryType, app.id);
       return getRevampApplicationSections(app.id, auth!.token!).then(applyS3);
     }).catch(() => {});
-  }, [auth?.token]);
+  }, [auth?.token, registryType]);
 
   function clearErr(key: string) {
     setErrors(p => { const n = { ...p }; delete n[key]; return n; });
@@ -344,7 +347,7 @@ export function RevampStep3CompetenzePage() {
   async function handleSaveDraft() {
     if (!auth?.token) return;
     try {
-      const appId = sessionStorage.getItem("revamp_applicationId");
+      const appId = loadRevampApplicationIdForRegistry(registryType);
       if (!appId) return;
       const areeChecked = AREE_TEMATICHE.filter(a => aree[a.id].checked).map(a => a.id);
       const draftPayload = JSON.stringify({
@@ -421,10 +424,12 @@ export function RevampStep3CompetenzePage() {
       servizi: Array.from(servizi), altroServ,
     };
     sessionStorage.setItem("revamp_s3", JSON.stringify(frontendPayload));
+    let savedAppId: string | null = null;
     if (auth?.token) {
       try {
-        const appId = sessionStorage.getItem("revamp_applicationId");
+        const appId = loadRevampApplicationIdForRegistry(registryType);
         if (appId) {
+          savedAppId = appId;
           if (isA && isDocente) {
             /* S3A — Docente / Formatore */
             const s3aPayload = {
@@ -457,7 +462,16 @@ export function RevampStep3CompetenzePage() {
         return;
       }
     }
-    navigate(`/apply/${registryParam}/step/4`);
+    if (integrationEdit && auth?.token && savedAppId) {
+      try {
+        await answerRevampIntegrationRequest(savedAppId, auth.token);
+        clearRevampIntegrationEditSession();
+      } catch {
+        window.alert("Invio integrazione non riuscito. Controlla i dati e riprova.");
+        return;
+      }
+    }
+    navigate(integrationEdit?.returnPath ?? `/apply/${registryParam}/step/4`);
   }
 
   const checkedAree  = AREE_TEMATICHE.filter(a => aree[a.id].checked).length;
@@ -469,7 +483,13 @@ export function RevampStep3CompetenzePage() {
   return (
     <div style={{ margin: "-1rem", background: "#f0f4f8", minHeight: "100%" }}>
       <PageHeader title={title} subtitle={subtitle} savedAt={savedAt} onSave={() => void handleSaveDraft()} />
-      <StepBar active={2} accent={accent} />
+      {integrationEdit ? (
+        <div style={{ background: "#eff6ff", borderBottom: "1px solid #bfdbfe", padding: "12px 40px", color: "#174f82", fontSize: "0.86rem", fontWeight: 700 }}>
+          Integrazione richiesta - Correggi la sezione Competenze, salva e invia la risposta.
+        </div>
+      ) : (
+        <StepBar active={2} accent={accent} />
+      )}
 
       <div style={{ maxWidth: 980, margin: "20px auto", padding: "0 20px 100px" }}>
 
@@ -688,17 +708,21 @@ export function RevampStep3CompetenzePage() {
 
       {/* ── Bottom nav ── */}
       <div className="wizard-bottom-nav" style={{ background: "#fff", borderTop: "1px solid #e5e7eb", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 36px", position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 10 }}>
-        <Link className="wizard-nav-button wizard-nav-button-prev" to={`/apply/${registryParam}/step/2`} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 20px", background: "#fff", border: `1.5px solid ${accent}`, borderRadius: 6, fontWeight: 600, fontSize: "0.84rem", color: accent, textDecoration: "none" }}>
-          <ArrowLeft size={14} /> Sezione precedente
+        <Link className="wizard-nav-button wizard-nav-button-prev" to={integrationEdit?.returnPath ?? `/apply/${registryParam}/step/2`} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 20px", background: "#fff", border: `1.5px solid ${accent}`, borderRadius: 6, fontWeight: 600, fontSize: "0.84rem", color: accent, textDecoration: "none" }}>
+          <ArrowLeft size={14} /> {integrationEdit ? "Torna alla richiesta" : "Sezione precedente"}
         </Link>
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
-          <span style={{ fontSize: "0.77rem", color: MUTED }}>Avanzamento: <strong>60%</strong></span>
-          <div style={{ width: 180, height: 4, background: "#e5e7eb", borderRadius: 2, overflow: "hidden" }}>
-            <div style={{ width: "60%", height: "100%", background: accent, borderRadius: 2 }} />
+        {integrationEdit ? (
+          <div style={{ fontSize: "0.77rem", color: MUTED, fontWeight: 700 }}>Modalita integrazione</div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
+            <span style={{ fontSize: "0.77rem", color: MUTED }}>Avanzamento: <strong>60%</strong></span>
+            <div style={{ width: 180, height: 4, background: "#e5e7eb", borderRadius: 2, overflow: "hidden" }}>
+              <div style={{ width: "60%", height: "100%", background: accent, borderRadius: 2 }} />
+            </div>
           </div>
-        </div>
+        )}
         <button className="wizard-nav-button wizard-nav-button-next" type="button" onClick={handleNext} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 18px", background: accent, color: "#fff", border: "none", borderRadius: 6, fontWeight: 600, fontSize: "0.84rem", cursor: "pointer" }}>
-          Sezione successiva <ArrowRight size={14} />
+          {integrationEdit ? "Salva e invia integrazione" : "Sezione successiva"} <ArrowRight size={14} />
         </button>
       </div>
     </div>

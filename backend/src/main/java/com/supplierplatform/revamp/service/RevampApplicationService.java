@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.supplierplatform.common.EntityNotFoundException;
 import com.supplierplatform.revamp.dto.RevampApplicationSummaryDto;
 import com.supplierplatform.revamp.dto.RevampAuditEventInputDto;
+import com.supplierplatform.revamp.dto.RevampIdentityAvailabilityDto;
 import com.supplierplatform.revamp.dto.RevampApplicationCommunicationDto;
 import com.supplierplatform.revamp.dto.RevampIntegrationRequestSummaryDto;
 import com.supplierplatform.revamp.dto.RevampSectionSnapshotDto;
@@ -23,30 +24,55 @@ import com.supplierplatform.revamp.model.RevampReviewCase;
 import com.supplierplatform.revamp.model.RevampInvite;
 import com.supplierplatform.revamp.repository.RevampApplicationRepository;
 import com.supplierplatform.revamp.repository.RevampApplicationSectionRepository;
+import com.supplierplatform.revamp.repository.RevampApplicationAttachmentRepository;
 import com.supplierplatform.revamp.repository.RevampAuditEventRepository;
 import com.supplierplatform.revamp.repository.RevampIntegrationRequestRepository;
 import com.supplierplatform.revamp.repository.RevampReviewCaseRepository;
 import com.supplierplatform.revamp.repository.RevampInviteRepository;
+import com.supplierplatform.revamp.repository.RevampOtpChallengeRepository;
 import com.supplierplatform.user.User;
 import com.supplierplatform.user.UserRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.time.LocalDateTime;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
+import java.util.Optional;
 import java.util.UUID;
+import java.util.stream.Stream;
 
 @Service
 @RequiredArgsConstructor
 public class RevampApplicationService {
 
+    private static final String TAX_CODE_IDENTITY = "TAX_CODE";
+    private static final String VAT_NUMBER_IDENTITY = "VAT_NUMBER";
+    private static final List<ApplicationStatus> IDENTITY_BLOCKING_STATUSES = List.of(
+            ApplicationStatus.DRAFT,
+            ApplicationStatus.SUBMITTED,
+            ApplicationStatus.UNDER_REVIEW,
+            ApplicationStatus.INTEGRATION_REQUIRED,
+            ApplicationStatus.APPROVED,
+            ApplicationStatus.SUSPENDED,
+            ApplicationStatus.RENEWAL_DUE
+    );
+
     private final RevampApplicationRepository applicationRepository;
     private final RevampApplicationSectionRepository applicationSectionRepository;
+    private final RevampApplicationAttachmentRepository applicationAttachmentRepository;
     private final RevampInviteRepository inviteRepository;
     private final RevampReviewCaseRepository reviewCaseRepository;
     private final RevampIntegrationRequestRepository integrationRequestRepository;
+    private final RevampOtpChallengeRepository otpChallengeRepository;
     private final RevampAuditEventRepository auditEventRepository;
     private final UserRepository userRepository;
     private final RevampApplicationMapper applicationMapper;
@@ -56,6 +82,9 @@ public class RevampApplicationService {
     private final RevampAttachmentService attachmentService;
     private final RevampDraftPayloadUpConverter draftPayloadUpConverter;
     private final ObjectMapper objectMapper;
+
+    @Value("${app.file.upload-dir}")
+    private String uploadDir;
 
     @Transactional
     public RevampApplicationSummaryDto createDraft(
@@ -150,6 +179,7 @@ public class RevampApplicationService {
                         .findByApplicationIdAndSectionKeyAndIsLatestTrue(applicationId, "S3A")
                         .map(RevampApplicationSection::getPayloadJson)
         );
+        updateApplicationIdentityIfNeeded(application, sectionKey, validatedPayload);
         JsonNode enrichedPayload = attachmentService.syncAndEnrich(application, sectionKey, validatedPayload);
         section.setPayloadJson(enrichedPayload);
         section.setCompleted(completed);
@@ -158,6 +188,55 @@ public class RevampApplicationService {
 
         RevampApplicationSection saved = applicationSectionRepository.save(section);
         return applicationMapper.toSectionSnapshot(saved);
+    }
+
+    @Transactional(readOnly = true)
+    public RevampIdentityAvailabilityDto checkIdentityAvailability(
+            UUID applicationId,
+            String field,
+            String value
+    ) {
+        RevampApplication application = getApplication(applicationId);
+        IdentityCandidate candidate = identityCandidateForField(application.getRegistryType(), field, value);
+        if (candidate == null || candidate.valueNormalized().isBlank()) {
+            return new RevampIdentityAvailabilityDto(true, field, null);
+        }
+
+        boolean duplicate = applicationRepository.existsBlockingIdentity(
+                application.getRegistryType(),
+                candidate.keyType(),
+                candidate.valueNormalized(),
+                IDENTITY_BLOCKING_STATUSES,
+                applicationId
+        );
+        return new RevampIdentityAvailabilityDto(
+                !duplicate,
+                candidate.field(),
+                duplicate ? candidate.messageKey() : null
+        );
+    }
+
+    @Transactional
+    public void deleteOwnDraft(UUID applicationId, UUID currentUserId) {
+        RevampApplication application = getApplication(applicationId);
+        if (application.getApplicantUser() == null || !application.getApplicantUser().getId().equals(currentUserId)) {
+            throw new AccessDeniedException("Not authorized to delete this application draft");
+        }
+        deleteDraft(application);
+    }
+
+    @Transactional
+    public int deleteStaleDraftsOlderThanDays(int days) {
+        if (days < 1) {
+            throw new IllegalArgumentException("days must be at least 1");
+        }
+        LocalDateTime cutoff = LocalDateTime.now().minusDays(days);
+        List<RevampApplication> staleDrafts = applicationRepository.findByStatusAndUpdatedAtBefore(
+                ApplicationStatus.DRAFT,
+                cutoff
+        );
+        staleDrafts.forEach(this::deleteDraft);
+        return staleDrafts.size();
     }
 
     @Transactional(readOnly = true)
@@ -229,6 +308,9 @@ public class RevampApplicationService {
             throw new IllegalStateException("Application cannot be submitted from status: " + status);
         }
 
+        ensureIdentityFromLatestSection(application);
+        assertIdentityAvailable(application);
+
         if (status == ApplicationStatus.INTEGRATION_REQUIRED) {
             closeOpenIntegrationRequest(application);
             application.setStatus(ApplicationStatus.UNDER_REVIEW);
@@ -276,6 +358,42 @@ public class RevampApplicationService {
         return applicationMapper.toSummary(saved);
     }
 
+    @Transactional
+    public RevampApplicationSummaryDto answerIntegration(UUID applicationId, UUID currentUserId) {
+        RevampApplication application = getApplication(applicationId);
+        if (application.getApplicantUser() == null || !application.getApplicantUser().getId().equals(currentUserId)) {
+            throw new AccessDeniedException("Not authorized to answer this integration request");
+        }
+        ApplicationStatus beforeStatus = application.getStatus();
+        if (beforeStatus != ApplicationStatus.INTEGRATION_REQUIRED) {
+            throw new IllegalStateException("Application cannot answer integration from status: " + beforeStatus);
+        }
+
+        RevampIntegrationRequest answeredRequest = closeOpenIntegrationRequest(application);
+        if (answeredRequest == null) {
+            throw new IllegalStateException("No open integration request found for this application");
+        }
+
+        application.setStatus(ApplicationStatus.UNDER_REVIEW);
+        RevampApplication saved = applicationRepository.save(application);
+        String actorRole = saved.getApplicantUser() != null && saved.getApplicantUser().getRole() != null
+                ? saved.getApplicantUser().getRole().name()
+                : null;
+        auditService.append(new RevampAuditEventInputDto(
+                "revamp.application.integration.answered",
+                "REVAMP_APPLICATION",
+                saved.getId(),
+                saved.getApplicantUser() != null ? saved.getApplicantUser().getId() : null,
+                actorRole,
+                null,
+                null,
+                "{\"status\":\"" + beforeStatus.name() + "\"}",
+                "{\"status\":\"" + saved.getStatus().name() + "\"}",
+                "{\"integrationRequestId\":\"" + answeredRequest.getId() + "\",\"applicantName\":\"" + esc(saved.getApplicantUser() != null ? saved.getApplicantUser().getFullName() : "") + "\"}"
+        ));
+        return applicationMapper.toSummary(saved);
+    }
+
     private void ensurePendingReviewCase(RevampApplication application) {
         List<RevampReviewCase> activeCases = reviewCaseRepository
                 .findByApplicationIdAndStatusNotInOrderByUpdatedAtDesc(
@@ -292,10 +410,148 @@ public class RevampApplicationService {
         reviewCaseRepository.save(reviewCase);
     }
 
-    private void closeOpenIntegrationRequest(RevampApplication application) {
+    private void updateApplicationIdentityIfNeeded(RevampApplication application, String sectionKey, JsonNode payload) {
+        if (!"S1".equalsIgnoreCase(sectionKey)) {
+            return;
+        }
+        IdentityCandidate candidate = identityCandidateForPayload(application.getRegistryType(), payload);
+        if (candidate == null || candidate.valueNormalized().isBlank()) {
+            application.setIdentityKeyType(null);
+            application.setIdentityValueNormalized(null);
+            applicationRepository.save(application);
+            return;
+        }
+        assertIdentityAvailable(application, candidate);
+        application.setIdentityKeyType(candidate.keyType());
+        application.setIdentityValueNormalized(candidate.valueNormalized());
+        applicationRepository.save(application);
+    }
+
+    private void ensureIdentityFromLatestSection(RevampApplication application) {
+        if (application.getIdentityKeyType() != null && application.getIdentityValueNormalized() != null) {
+            return;
+        }
+        Optional.ofNullable(applicationSectionRepository
+                .findByApplicationIdAndSectionKeyAndIsLatestTrue(application.getId(), "S1"))
+                .orElse(Optional.empty())
+                .map(RevampApplicationSection::getPayloadJson)
+                .map(payload -> identityCandidateForPayload(application.getRegistryType(), payload))
+                .ifPresent(candidate -> {
+                    if (candidate.valueNormalized().isBlank()) return;
+                    assertIdentityAvailable(application, candidate);
+                    application.setIdentityKeyType(candidate.keyType());
+                    application.setIdentityValueNormalized(candidate.valueNormalized());
+                    applicationRepository.save(application);
+                });
+    }
+
+    private void assertIdentityAvailable(RevampApplication application) {
+        if (application.getIdentityKeyType() == null || application.getIdentityValueNormalized() == null) {
+            return;
+        }
+        IdentityCandidate candidate = identityCandidateForStored(application);
+        assertIdentityAvailable(application, candidate);
+    }
+
+    private void assertIdentityAvailable(RevampApplication application, IdentityCandidate candidate) {
+        boolean duplicate = applicationRepository.existsBlockingIdentity(
+                application.getRegistryType(),
+                candidate.keyType(),
+                candidate.valueNormalized(),
+                IDENTITY_BLOCKING_STATUSES,
+                application.getId()
+        );
+        if (duplicate) {
+            throw new IllegalStateException(candidate.messageKey());
+        }
+    }
+
+    private void deleteDraft(RevampApplication application) {
+        if (application.getStatus() != ApplicationStatus.DRAFT) {
+            throw new IllegalStateException("Only DRAFT applications can be deleted");
+        }
+        UUID applicationId = application.getId();
+        otpChallengeRepository.deleteByApplicationId(applicationId);
+        applicationAttachmentRepository.deleteByApplicationId(applicationId);
+        applicationSectionRepository.deleteByApplicationId(applicationId);
+        applicationRepository.delete(application);
+        applicationRepository.flush();
+        deleteUploadedFiles(applicationId);
+    }
+
+    private void deleteUploadedFiles(UUID applicationId) {
+        if (uploadDir == null || uploadDir.isBlank()) return;
+        Path targetDir = Paths.get(uploadDir).toAbsolutePath().normalize()
+                .resolve("revamp")
+                .resolve(applicationId.toString())
+                .normalize();
+        Path uploadRoot = Paths.get(uploadDir).toAbsolutePath().normalize();
+        if (!targetDir.startsWith(uploadRoot) || !Files.exists(targetDir)) return;
+        try (Stream<Path> paths = Files.walk(targetDir)) {
+            paths.sorted(Comparator.reverseOrder()).forEach(path -> {
+                try {
+                    Files.deleteIfExists(path);
+                } catch (IOException ignored) {
+                }
+            });
+        } catch (IOException ignored) {
+        }
+    }
+
+    private IdentityCandidate identityCandidateForPayload(RegistryType registryType, JsonNode payload) {
+        if (registryType == RegistryType.ALBO_A) {
+            return new IdentityCandidate("taxCode", TAX_CODE_IDENTITY, normalizeIdentity(extractText(payload, "taxCode")), "validation.duplicate.taxId");
+        }
+        if (registryType == RegistryType.ALBO_B) {
+            String value = firstNonBlank(extractText(payload, "vatNumber"), extractText(payload, "piva"));
+            return new IdentityCandidate("vatNumber", VAT_NUMBER_IDENTITY, normalizeIdentity(value), "validation.duplicate.vatNumber");
+        }
+        return null;
+    }
+
+    private IdentityCandidate identityCandidateForField(RegistryType registryType, String field, String value) {
+        String normalizedField = field == null ? "" : field.trim();
+        if (registryType == RegistryType.ALBO_A && "taxCode".equals(normalizedField)) {
+            return new IdentityCandidate("taxCode", TAX_CODE_IDENTITY, normalizeIdentity(value), "validation.duplicate.taxId");
+        }
+        if (registryType == RegistryType.ALBO_B && ("vatNumber".equals(normalizedField) || "piva".equals(normalizedField))) {
+            return new IdentityCandidate("vatNumber", VAT_NUMBER_IDENTITY, normalizeIdentity(value), "validation.duplicate.vatNumber");
+        }
+        throw new IllegalArgumentException("Field " + field + " is not a unique identity field for " + registryType);
+    }
+
+    private IdentityCandidate identityCandidateForStored(RevampApplication application) {
+        String field = VAT_NUMBER_IDENTITY.equals(application.getIdentityKeyType()) ? "vatNumber" : "taxCode";
+        String messageKey = VAT_NUMBER_IDENTITY.equals(application.getIdentityKeyType())
+                ? "validation.duplicate.vatNumber"
+                : "validation.duplicate.taxId";
+        return new IdentityCandidate(field, application.getIdentityKeyType(), application.getIdentityValueNormalized(), messageKey);
+    }
+
+    private String normalizeIdentity(String value) {
+        if (value == null) return "";
+        return value.replaceAll("\\s+", "").trim().toUpperCase(Locale.ROOT);
+    }
+
+    private String extractText(JsonNode node, String field) {
+        if (node == null || node.isNull()) return null;
+        JsonNode value = node.path(field);
+        if (value.isMissingNode() || value.isNull()) return null;
+        if (value.isTextual() || value.isNumber() || value.isBoolean()) return value.asText();
+        return value.toString();
+    }
+
+    private String firstNonBlank(String... values) {
+        for (String value : values) {
+            if (value != null && !value.trim().isEmpty()) return value;
+        }
+        return null;
+    }
+
+    private RevampIntegrationRequest closeOpenIntegrationRequest(RevampApplication application) {
         RevampIntegrationRequest openRequest = integrationRequestRepository
                 .findFirstByReviewCaseApplicationIdAndStatusOrderByCreatedAtDesc(application.getId(), IntegrationRequestStatus.OPEN);
-        if (openRequest == null) return;
+        if (openRequest == null) return null;
 
         openRequest.setStatus(IntegrationRequestStatus.ANSWERED);
         openRequest.setSupplierRespondedAt(LocalDateTime.now());
@@ -314,6 +570,7 @@ public class RevampApplicationService {
             reviewCase.setVerifiedByUser(null);
             reviewCaseRepository.save(reviewCase);
         }
+        return openRequest;
     }
 
     private static String esc(String s) {
@@ -356,5 +613,8 @@ public class RevampApplicationService {
         } catch (JsonProcessingException ex) {
             throw new IllegalArgumentException("Invalid JSON for " + fieldName, ex);
         }
+    }
+
+    private record IdentityCandidate(String field, String keyType, String valueNormalized, String messageKey) {
     }
 }

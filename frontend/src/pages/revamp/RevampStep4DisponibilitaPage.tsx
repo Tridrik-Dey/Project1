@@ -2,8 +2,10 @@ import { ChangeEvent, useEffect, useRef, useState } from "react";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, ArrowRight, CheckCircle, Info, Plus, Save, Trash2, Upload } from "lucide-react";
 import { useAuth } from "../../auth/AuthContext";
-import { createRevampApplicationDraft, getMyLatestRevampApplication, getRevampApplicationSections, saveRevampApplicationSection, uploadRevampAttachment } from "../../api/revampApplicationApi";
+import { answerRevampIntegrationRequest, createRevampApplicationDraft, getMyLatestRevampApplication, getRevampApplicationSections, saveRevampApplicationSection, uploadRevampAttachment } from "../../api/revampApplicationApi";
 import type { AttachmentUploadResult } from "../../api/revampApplicationApi";
+import { loadRevampApplicationIdForRegistry, saveRevampApplicationIdForRegistry } from "../../utils/revampApplicationSession";
+import { clearRevampIntegrationEditSession, isRevampIntegrationEditFor } from "../../utils/revampIntegrationEditSession";
 import { AREE_TEMATICHE } from "./RevampStep3CompetenzePage";
 
 const NAVY  = "#0f2a52";
@@ -231,6 +233,8 @@ export function RevampStep4DisponibilitaPage() {
   const isDocente  = isA && tipologia === "docente";
   const accent     = isA ? NAVY : GREEN;
   const title      = isA ? "Albo A — Professionisti" : "Albo B — Aziende";
+  const registryType = isA ? "ALBO_A" : "ALBO_B";
+  const integrationEdit = isRevampIntegrationEditFor(registryType, 4);
   const subtitle   = isDocente ? "Sezione 4 · Disponibilità, Esperienze e Allegati" : "Sezione 4 · Disponibilità e Allegati";
 
   /* ── 3A C — Disponibilità ── */
@@ -305,19 +309,18 @@ export function RevampStep4DisponibilitaPage() {
       }
     }
 
-    const existingAppId = sessionStorage.getItem("revamp_applicationId");
+    const existingAppId = loadRevampApplicationIdForRegistry(registryType);
     if (existingAppId) {
       getRevampApplicationSections(existingAppId, auth.token).then(applyS4).catch(() => {});
       return;
     }
 
-    const expectedType = isA ? "ALBO_A" : "ALBO_B";
     getMyLatestRevampApplication(auth.token).then(app => {
-      if (!app || app.status !== "DRAFT" || app.registryType !== expectedType) return;
-      sessionStorage.setItem("revamp_applicationId", app.id);
+      if (!app || app.status !== "DRAFT" || app.registryType !== registryType) return;
+      saveRevampApplicationIdForRegistry(registryType, app.id);
       return getRevampApplicationSections(app.id, auth!.token!).then(applyS4);
     }).catch(() => {});
-  }, [auth?.token]);
+  }, [auth?.token, registryType]);
 
   function clearErr(key: string) {
     setErrors(p => { const n = { ...p }; delete n[key]; return n; });
@@ -330,7 +333,7 @@ export function RevampStep4DisponibilitaPage() {
   async function handleSaveDraft() {
     if (!auth?.token) return;
     try {
-      const appId = sessionStorage.getItem("revamp_applicationId");
+      const appId = loadRevampApplicationIdForRegistry(registryType);
       if (!appId) return;
       await saveRevampApplicationSection(appId, "S4", JSON.stringify({
         disponibilita, areeSpecifiche, tariffaGiorn, tariffaOra,
@@ -359,13 +362,12 @@ export function RevampStep4DisponibilitaPage() {
       showToast(`Il file è troppo grande. Massimo ${maxMB} MB.`);
       return;
     }
-    let appId = sessionStorage.getItem("revamp_applicationId");
+    let appId = loadRevampApplicationIdForRegistry(registryType);
     if (!appId) {
       try {
-        const registryType = isA ? "ALBO_A" : "ALBO_B";
         const draft = await createRevampApplicationDraft({ registryType, sourceChannel: "PUBLIC" }, auth.token);
         appId = draft.id;
-        sessionStorage.setItem("revamp_applicationId", appId);
+        saveRevampApplicationIdForRegistry(registryType, appId);
       } catch {
         showToast("Impossibile avviare la domanda. Riprova.");
         return;
@@ -423,10 +425,12 @@ export function RevampStep4DisponibilitaPage() {
       cvName: activeCv?.fileName ?? null,
       certName: certAttachment?.fileName ?? null,
     }));
+    let savedAppId: string | null = null;
     if (auth?.token && isA) {
       try {
-        const appId = sessionStorage.getItem("revamp_applicationId");
+        const appId = loadRevampApplicationIdForRegistry(registryType);
         if (appId) {
+          savedAppId = appId;
           if (!isDocente) {
             const s3Raw = JSON.parse(sessionStorage.getItem("revamp_s3") ?? "{}") as Record<string, unknown>;
             const rawServizi = Array.isArray(s3Raw.servizi) ? (s3Raw.servizi as string[]) : [];
@@ -460,8 +464,9 @@ export function RevampStep4DisponibilitaPage() {
       }
     } else if (auth?.token && !isA) {
       try {
-        const appId = sessionStorage.getItem("revamp_applicationId");
+        const appId = loadRevampApplicationIdForRegistry(registryType);
         if (appId) {
+          savedAppId = appId;
           await saveRevampApplicationSection(appId, "S4", sessionStorage.getItem("revamp_s4") ?? "{}", true, auth.token);
         }
       } catch {
@@ -469,7 +474,16 @@ export function RevampStep4DisponibilitaPage() {
         return;
       }
     }
-    navigate(`/apply/${registryParam}/step/5`);
+    if (integrationEdit && auth?.token && savedAppId) {
+      try {
+        await answerRevampIntegrationRequest(savedAppId, auth.token);
+        clearRevampIntegrationEditSession();
+      } catch {
+        setSaveError("Invio integrazione non riuscito. Controlla i dati e riprova.");
+        return;
+      }
+    }
+    navigate(integrationEdit?.returnPath ?? `/apply/${registryParam}/step/5`);
   }
 
   const errorCount = Object.keys(errors).length;
@@ -482,7 +496,13 @@ export function RevampStep4DisponibilitaPage() {
         </div>
       )}
       <PageHeader title={title} subtitle={subtitle} savedAt={savedAt} onSave={() => void handleSaveDraft()} />
-      <StepBar active={3} accent={accent} />
+      {integrationEdit ? (
+        <div style={{ background: "#eff6ff", borderBottom: "1px solid #bfdbfe", padding: "12px 40px", color: "#174f82", fontSize: "0.86rem", fontWeight: 700 }}>
+          Integrazione richiesta - Correggi questa sezione, salva e invia la risposta.
+        </div>
+      ) : (
+        <StepBar active={3} accent={accent} />
+      )}
 
       <div style={{ maxWidth: 980, margin: "20px auto", padding: "0 20px 100px" }}>
 
@@ -701,17 +721,21 @@ export function RevampStep4DisponibilitaPage() {
 
       {/* ── Bottom nav ── */}
       <div className="wizard-bottom-nav" style={{ background: "#fff", borderTop: "1px solid #e5e7eb", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 36px", position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 10 }}>
-        <Link className="wizard-nav-button wizard-nav-button-prev" to={`/apply/${registryParam}/step/3`} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 20px", background: "#fff", border: `1.5px solid ${accent}`, borderRadius: 6, fontWeight: 600, fontSize: "0.84rem", color: accent, textDecoration: "none" }}>
-          <ArrowLeft size={14} /> Sezione precedente
+        <Link className="wizard-nav-button wizard-nav-button-prev" to={integrationEdit?.returnPath ?? `/apply/${registryParam}/step/3`} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 20px", background: "#fff", border: `1.5px solid ${accent}`, borderRadius: 6, fontWeight: 600, fontSize: "0.84rem", color: accent, textDecoration: "none" }}>
+          <ArrowLeft size={14} /> {integrationEdit ? "Torna alla richiesta" : "Sezione precedente"}
         </Link>
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
-          <span style={{ fontSize: "0.77rem", color: MUTED }}>Avanzamento: <strong>80%</strong></span>
-          <div style={{ width: 180, height: 4, background: "#e5e7eb", borderRadius: 2, overflow: "hidden" }}>
-            <div style={{ width: "80%", height: "100%", background: accent, borderRadius: 2 }} />
+        {integrationEdit ? (
+          <div style={{ fontSize: "0.82rem", color: MUTED, fontWeight: 700 }}>Modalita integrazione</div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
+            <span style={{ fontSize: "0.77rem", color: MUTED }}>Avanzamento: <strong>80%</strong></span>
+            <div style={{ width: 180, height: 4, background: "#e5e7eb", borderRadius: 2, overflow: "hidden" }}>
+              <div style={{ width: "80%", height: "100%", background: accent, borderRadius: 2 }} />
+            </div>
           </div>
-        </div>
+        )}
         <button className="wizard-nav-button wizard-nav-button-next" type="button" onClick={handleNext} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 18px", background: accent, color: "#fff", border: "none", borderRadius: 6, fontWeight: 600, fontSize: "0.84rem", cursor: "pointer" }}>
-          Sezione successiva <ArrowRight size={14} />
+          {integrationEdit ? "Salva e invia integrazione" : "Sezione successiva"} <ArrowRight size={14} />
         </button>
       </div>
     </div>

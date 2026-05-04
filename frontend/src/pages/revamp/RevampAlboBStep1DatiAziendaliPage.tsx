@@ -1,8 +1,10 @@
 import { ChangeEvent, FormEvent, useEffect, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import { ArrowLeft, ArrowRight, CheckCircle, Save } from "lucide-react";
+import { ArrowLeft, ArrowRight, CheckCircle, Info, Save } from "lucide-react";
 import { useAuth } from "../../auth/AuthContext";
-import { createRevampApplicationDraft, getMyLatestRevampApplication, getRevampApplicationSections, saveRevampApplicationSection } from "../../api/revampApplicationApi";
+import { HttpError } from "../../api/http";
+import { checkRevampIdentityAvailability, createRevampApplicationDraft, deleteRevampApplicationDraft, getMyLatestRevampApplication, getRevampApplicationSections, saveRevampApplicationSection } from "../../api/revampApplicationApi";
+import { clearRevampApplicationIdForRegistry, loadRevampApplicationIdForRegistry, saveRevampApplicationIdForRegistry } from "../../utils/revampApplicationSession";
 
 const GREEN = "#1a5c3a";
 const MUTED = "#6b7280";
@@ -96,6 +98,7 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const URL_RE   = /^https?:\/\/.+\..+/;
 const REA_RE   = /^[A-Z]{2}-\d+$/i;
 const MY_RE    = /^(0[1-9]|1[0-2])\/\d{4}$/;
+const DUPLICATE_PIVA_ERROR = "Partita IVA gia presente. Inserisci un valore diverso.";
 
 type OnChange = (e: ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => void;
 
@@ -111,17 +114,40 @@ const baseInput = (error?: boolean): React.CSSProperties => ({
   color: "#111827", background: "#fff",
 });
 
-function Field({ label, required, placeholder, value, onChange, error, type = "text", hintText }: {
+function Field({ label, required, placeholder, value, onChange, error, type = "text", hintText, errorTooltip }: {
   label: string; required?: boolean; placeholder?: string; value?: string;
-  onChange?: OnChange; error?: string; type?: string; hintText?: string;
+  onChange?: OnChange; error?: string; type?: string; hintText?: string; errorTooltip?: boolean;
 }) {
+  const [showErrorTip, setShowErrorTip] = useState(false);
   return (
     <div style={col}>
-      <span style={lbl}>{label}{required ? <span style={{ color: ERR }}> *</span> : null}
+      <span style={{ ...lbl, display: "flex", alignItems: "center", gap: 4 }}>{label}{required ? <span style={{ color: ERR }}> *</span> : null}
         {hintText ? <span style={hint}> — {hintText}</span> : null}
+        {error && errorTooltip ? (
+          <span
+            title={error}
+            tabIndex={0}
+            style={{ position: "relative", display: "inline-flex", alignItems: "center" }}
+            onMouseEnter={() => setShowErrorTip(true)}
+            onMouseLeave={() => setShowErrorTip(false)}
+            onFocus={() => setShowErrorTip(true)}
+            onBlur={() => setShowErrorTip(false)}
+          >
+            <Info size={13} style={{ color: ERR, cursor: "help" }} />
+            {showErrorTip && (
+              <span style={{
+                position: "absolute", bottom: "calc(100% + 6px)", left: "50%",
+                transform: "translateX(-50%)", background: "#991b1b", color: "#fff",
+                fontSize: "0.72rem", padding: "6px 9px", borderRadius: 5,
+                whiteSpace: "nowrap", pointerEvents: "none", zIndex: 120,
+                boxShadow: "0 8px 20px rgba(15, 23, 42, 0.18)"
+              }}>{error}</span>
+            )}
+          </span>
+        ) : null}
       </span>
       <input type={type} placeholder={placeholder ?? ""} value={value ?? ""} onChange={onChange} style={baseInput(!!error)} />
-      {error ? <span style={errTxt}>{error}</span> : null}
+      {error && !errorTooltip ? <span style={errTxt}>{error}</span> : null}
     </div>
   );
 }
@@ -190,6 +216,80 @@ export function RevampAlboBStep1DatiAziendaliPage() {
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
 
+  async function getOrCreateAlboBApplicationId(): Promise<string> {
+    const existing = loadRevampApplicationIdForRegistry("ALBO_B");
+    if (existing) return existing;
+    if (!auth?.token) throw new Error("Missing auth token");
+
+    const latest = await getMyLatestRevampApplication(auth.token).catch(() => null);
+    if (latest?.status === "DRAFT" && latest.registryType === "ALBO_B") {
+      saveRevampApplicationIdForRegistry("ALBO_B", latest.id);
+      return latest.id;
+    }
+
+    const draft = await createRevampApplicationDraft({ registryType: "ALBO_B", sourceChannel: "PUBLIC" }, auth.token);
+    saveRevampApplicationIdForRegistry("ALBO_B", draft.id);
+    return draft.id;
+  }
+
+  useEffect(() => {
+    if (!auth?.token) return;
+    const idsToDelete = new Set<string>();
+    const storedAlboAId = loadRevampApplicationIdForRegistry("ALBO_A");
+    if (storedAlboAId) idsToDelete.add(storedAlboAId);
+
+    let cancelled = false;
+    getMyLatestRevampApplication(auth.token)
+      .then(latest => {
+        if (cancelled) return;
+        if (latest?.status === "DRAFT" && latest.registryType === "ALBO_A") {
+          idsToDelete.add(latest.id);
+        }
+        idsToDelete.forEach(id => {
+          deleteRevampApplicationDraft(id, auth.token)
+            .catch(() => {})
+            .finally(() => clearRevampApplicationIdForRegistry("ALBO_A"));
+        });
+        if (idsToDelete.size === 0) {
+          clearRevampApplicationIdForRegistry("ALBO_A");
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, [auth?.token]);
+
+  useEffect(() => {
+    if (!auth?.token || !form.piva.trim() || !PIVA_RE.test(form.piva.trim())) return;
+
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      getOrCreateAlboBApplicationId()
+        .then(appId => checkRevampIdentityAvailability(appId, "vatNumber", form.piva.trim(), auth.token))
+        .then((result) => {
+          if (cancelled) return;
+          setErrors((prev) => {
+            const next = { ...prev };
+            if (!result.available) {
+              next.piva = DUPLICATE_PIVA_ERROR;
+              setSaveError(null);
+            } else if (next.piva === DUPLICATE_PIVA_ERROR) {
+              delete next.piva;
+            }
+            return next;
+          });
+        })
+        .catch(() => {});
+    }, 450);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [auth?.token, form.piva]);
+
   useEffect(() => {
     if (!auth?.token) return;
 
@@ -203,7 +303,7 @@ export function RevampAlboBStep1DatiAziendaliPage() {
         ...prev,
         ragioneSociale:   s1.ragioneSociale   ?? prev.ragioneSociale,
         formaGiuridica:   s1.formaGiuridica   ?? prev.formaGiuridica,
-        piva:             s1.piva             ?? prev.piva,
+        piva:             s1.piva             ?? s1.vatNumber ?? prev.piva,
         codiceFiscale:    s1.codiceFiscale    ?? prev.codiceFiscale,
         rea:              s1.rea              ?? prev.rea,
         cciaa:            s1.cciaa            ?? prev.cciaa,
@@ -228,7 +328,7 @@ export function RevampAlboBStep1DatiAziendaliPage() {
       }));
     }
 
-    const existingAppId = sessionStorage.getItem("revamp_applicationId");
+    const existingAppId = loadRevampApplicationIdForRegistry("ALBO_B");
     if (existingAppId) {
       getRevampApplicationSections(existingAppId, auth.token).then(applyS1).catch(() => {});
       return;
@@ -236,7 +336,7 @@ export function RevampAlboBStep1DatiAziendaliPage() {
 
     getMyLatestRevampApplication(auth.token).then(app => {
       if (!app || app.status !== "DRAFT" || app.registryType !== "ALBO_B") return;
-      sessionStorage.setItem("revamp_applicationId", app.id);
+      saveRevampApplicationIdForRegistry("ALBO_B", app.id);
       return getRevampApplicationSections(app.id, auth!.token!).then(applyS1);
     }).catch(() => {});
   }, [auth?.token]);
@@ -297,16 +397,16 @@ export function RevampAlboBStep1DatiAziendaliPage() {
       return;
     }
     try {
-      let appId = sessionStorage.getItem("revamp_applicationId");
-      if (!appId) {
-        const draft = await createRevampApplicationDraft({ registryType: "ALBO_B", sourceChannel: "PUBLIC" }, auth.token);
-        appId = draft.id;
-        sessionStorage.setItem("revamp_applicationId", appId);
-      }
-      await saveRevampApplicationSection(appId, "S1", JSON.stringify({ ...form }), false, auth.token);
+      const appId = await getOrCreateAlboBApplicationId();
+      await saveRevampApplicationSection(appId, "S1", JSON.stringify({ ...form, vatNumber: form.piva }), false, auth.token);
       handleSave();
-    } catch {
-      setSaveError("Salvataggio non riuscito. Riprova.");
+    } catch (error) {
+      if (error instanceof HttpError && error.message === "validation.duplicate.vatNumber") {
+        setErrors((prev) => ({ ...prev, piva: DUPLICATE_PIVA_ERROR }));
+        setSaveError(null);
+      } else {
+        setSaveError("Salvataggio non riuscito. Riprova.");
+      }
     }
   }
 
@@ -319,12 +419,7 @@ export function RevampAlboBStep1DatiAziendaliPage() {
     sessionStorage.setItem("revamp_b1", JSON.stringify(payload));
     if (auth?.token) {
       try {
-        let appId = sessionStorage.getItem("revamp_applicationId");
-        if (!appId) {
-          const draft = await createRevampApplicationDraft({ registryType: "ALBO_B", sourceChannel: "PUBLIC" }, auth.token);
-          appId = draft.id;
-          sessionStorage.setItem("revamp_applicationId", appId);
-        }
+        const appId = await getOrCreateAlboBApplicationId();
         const FORMA_TO_BACKEND: Record<string, string> = {
           srl: "SRL", srls: "SRL", spa: "SPA", sas: "SAS", snc: "SNC",
           coop_sociale: "COOPERATIVA", coop_nonsociale: "COOPERATIVA",
@@ -360,8 +455,17 @@ export function RevampAlboBStep1DatiAziendaliPage() {
             province: form.provinciaLegale,
           },
         };
+        const availability = await checkRevampIdentityAvailability(appId, "vatNumber", form.piva, auth.token);
+        if (!availability.available) {
+          setErrors((prev) => ({ ...prev, piva: DUPLICATE_PIVA_ERROR }));
+          return;
+        }
         await saveRevampApplicationSection(appId, "S1", JSON.stringify(apiPayload), true, auth.token);
-      } catch {
+      } catch (error) {
+        if (error instanceof HttpError && error.message === "validation.duplicate.vatNumber") {
+          setErrors((prev) => ({ ...prev, piva: DUPLICATE_PIVA_ERROR }));
+          return;
+        }
         window.alert("Salvataggio non riuscito. Controlla i dati e riprova.");
         return;
       }
@@ -369,7 +473,10 @@ export function RevampAlboBStep1DatiAziendaliPage() {
     navigate("/apply/albo-b/step/2");
   }
 
-  const errorCount = Object.keys(errors).length;
+  const summaryErrors = Object.fromEntries(
+    Object.entries(errors).filter(([field, message]) => !(field === "piva" && message === DUPLICATE_PIVA_ERROR))
+  );
+  const errorCount = Object.keys(summaryErrors).length;
 
   return (
     <div style={{ margin: "-1rem", background: "#f0f4f8", minHeight: "100%" }}>
@@ -414,7 +521,7 @@ export function RevampAlboBStep1DatiAziendaliPage() {
               <SelectField label="Forma giuridica" required value={form.formaGiuridica} onChange={set("formaGiuridica")} error={errors.formaGiuridica} options={FORME_GIURIDICHE} />
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 16, marginBottom: 16 }}>
-              <Field label="Partita IVA" required value={form.piva} onChange={set("piva")} error={errors.piva} placeholder="12345678901" />
+              <Field label="Partita IVA" required value={form.piva} onChange={set("piva")} error={errors.piva} placeholder="12345678901" errorTooltip={errors.piva === DUPLICATE_PIVA_ERROR} />
               <Field label="Codice Fiscale" value={form.codiceFiscale} onChange={set("codiceFiscale")} error={errors.codiceFiscale} placeholder="Se diverso dalla P.IVA" hintText="opzionale" />
               <Field label="Numero REA" required value={form.rea} onChange={set("rea")} error={errors.rea} placeholder="MI-1234567" hintText="es. MI-1234567" />
               <SelectField label="CCIAA di iscrizione" required value={form.cciaa} onChange={set("cciaa")} error={errors.cciaa} options={PROVINCE_IT} />

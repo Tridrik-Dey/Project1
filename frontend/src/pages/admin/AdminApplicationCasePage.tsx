@@ -118,6 +118,16 @@ function isUploadedAttachment(value: Record<string, unknown> | null | undefined)
   return Boolean(fileName && storageKey && storageKey !== "upload-pending");
 }
 
+function documentTypeLabel(value: unknown): string {
+  const type = toScalar(value).toUpperCase();
+  if (type === "VISURA_CAMERALE") return "Visura camerale";
+  if (type === "DURC") return "DURC";
+  if (type === "COMPANY_PROFILE") return "Company profile";
+  if (type === "CERTIFICATION") return "Certificato";
+  if (type === "CV") return "Curriculum Vitae";
+  return toScalar(value);
+}
+
 function canFinalizeDecision(role: AdminRole | null): boolean {
   return role === "SUPER_ADMIN" || role === "RESPONSABILE_ALBO";
 }
@@ -494,7 +504,9 @@ export function AdminApplicationCasePage() {
       : [];
     s4Attachments.forEach((attachment, index) => {
       if (!isUploadedAttachment(attachment)) return;
-      const labelParts = [toScalar(attachment.documentType), toScalar(attachment.fileName)].filter(Boolean);
+      const certificationLabel = toScalar(attachment.certificationLabel);
+      const typeLabel = certificationLabel || documentTypeLabel(attachment.documentType);
+      const labelParts = [typeLabel, toScalar(attachment.fileName)].filter(Boolean);
       const expired = Boolean(attachment.expired);
       const expiringSoon = Boolean(attachment.expiringSoon);
       const stateLabel = expired ? "Scaduto" : (expiringSoon ? "In scadenza" : "");
@@ -743,12 +755,12 @@ export function AdminApplicationCasePage() {
             ) : (
               <>
                 <SupplierProfileView isAlboB={isAlboB} sections={sections} />
-                {documentRows.length > 0 ? (
-                  <div className="panel review-docs-panel">
-                    <div className="review-side-panel-head">
-                      <h4><FileText size={15} /> Documenti allegati</h4>
-                      <span className="review-side-count">{documentRows.length} file</span>
-                    </div>
+                <div className="panel review-docs-panel">
+                  <div className="review-side-panel-head">
+                    <h4><FileText size={15} /> Documenti allegati</h4>
+                    <span className="review-side-count">{documentRows.length} file</span>
+                  </div>
+                  {documentRows.length > 0 ? (
                     <div className="review-doc-list">
                       {documentRows.map((row) => (
                         <div key={row.id} className="review-doc-row">
@@ -766,8 +778,12 @@ export function AdminApplicationCasePage() {
                         </div>
                       ))}
                     </div>
-                  </div>
-                ) : null}
+                  ) : (
+                    <div className="review-doc-empty">
+                      Nessun documento scaricabile trovato. Il fornitore deve caricare file reali nella sezione documenti prima della verifica.
+                    </div>
+                  )}
+                </div>
                 {timelineEvents.length > 0 ? (
                   <div className="panel review-history-panel">
                     <div className="review-side-panel-head">

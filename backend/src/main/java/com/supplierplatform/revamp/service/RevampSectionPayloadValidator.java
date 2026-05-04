@@ -14,6 +14,8 @@ public class RevampSectionPayloadValidator {
 
     private static final Set<String> SECTION_KEYS_ALBO_A = Set.of("S1", "S2", "S3A", "S3B", "S4", "S5");
     private static final Set<String> SECTION_KEYS_ALBO_B = Set.of("S1", "S2", "S3", "S4", "S5");
+    private static final java.util.regex.Pattern ATECO_CODE_PATTERN =
+            java.util.regex.Pattern.compile("^\\d{2}(?:\\.\\d{1,2})?(?:\\.\\d{1,2})?$");
 
     private static final Map<String, String> LEGACY_EMPLOYEE_RANGE_MAP = Map.of(
             "SOLO_TITOLARE", "E_1_9",
@@ -119,6 +121,7 @@ public class RevampSectionPayloadValidator {
             if ("ALTRO".equals(professionalType) && completed && isBlank(extractText(payload, "atecoCode"))) {
                 throw new IllegalArgumentException("S2 atecoCode is required when professionalType is ALTRO");
             }
+            validateAtecoField(payload, "atecoCode", false);
         }
 
         JsonNode secondary = payload.path("secondaryProfessionalTypes");
@@ -214,6 +217,9 @@ public class RevampSectionPayloadValidator {
             String storageKey = item.path("storageKey").asText("").trim();
             if (fileName.isBlank() || storageKey.isBlank()) {
                 throw new IllegalArgumentException("S4 attachment metadata requires fileName and storageKey");
+            }
+            if ("upload-pending".equalsIgnoreCase(storageKey)) {
+                throw new IllegalArgumentException("S4 attachment metadata requires an uploaded storageKey");
             }
             types.add(type);
         }
@@ -333,13 +339,10 @@ public class RevampSectionPayloadValidator {
 
         if (completed) {
             requireAnyNonBlank(payload, "atecoPrimary");
+            validateAtecoField(payload, "atecoPrimary", true);
             requireAnyNonBlank(payload, "revenueBand");
             validateOperatingRegions(payload);
             validateAtecoSecondary(payload);
-            String thirdSectorType = extractText(payload, "thirdSectorType");
-            if (!isBlank(thirdSectorType) && isBlank(extractText(payload, "runtsNumber"))) {
-                throw new IllegalArgumentException("S2 runtsNumber is required when thirdSectorType is provided");
-            }
         }
     }
 
@@ -362,8 +365,16 @@ public class RevampSectionPayloadValidator {
 
     private void validateAtecoSecondary(ObjectNode payload) {
         JsonNode secondary = payload.path("atecoSecondary");
+        if (!secondary.isArray() && payload.path("atecoSecondari").isArray()) {
+            secondary = payload.path("atecoSecondari");
+        }
         if (secondary.isArray() && secondary.size() > 3) {
             throw new IllegalArgumentException("S2 atecoSecondary exceeds max limit (3)");
+        }
+        if (secondary.isArray()) {
+            for (JsonNode value : secondary) {
+                validateAtecoValue(value.asText(""), "S2 atecoSecondary is invalid");
+            }
         }
     }
 
@@ -565,6 +576,31 @@ public class RevampSectionPayloadValidator {
             return "PSICOLOGO_COACH";
         }
         return normalized;
+    }
+
+    private void validateAtecoField(ObjectNode payload, String key, boolean required) {
+        String value = extractText(payload, key);
+        if (isBlank(value)) {
+            if (required) {
+                throw new IllegalArgumentException("S2 " + key + " is required");
+            }
+            return;
+        }
+        String normalized = normalizeAtecoCode(value);
+        validateAtecoValue(normalized, "S2 " + key + " is invalid");
+        payload.put(key, normalized);
+    }
+
+    private void validateAtecoValue(String value, String message) {
+        if (isBlank(value)) return;
+        String normalized = normalizeAtecoCode(value);
+        if (!ATECO_CODE_PATTERN.matcher(normalized).matches()) {
+            throw new IllegalArgumentException(message);
+        }
+    }
+
+    private String normalizeAtecoCode(String value) {
+        return value == null ? "" : value.trim().replace(',', '.');
     }
 
     private boolean extractBoolean(ObjectNode payload, String key) {

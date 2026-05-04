@@ -3,6 +3,7 @@ import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, CheckSquare } from "lucide-react";
 import { useAuth } from "../../auth/AuthContext";
 import { saveRevampApplicationSection } from "../../api/revampApplicationApi";
+import { loadRevampApplicationIdForRegistry } from "../../utils/revampApplicationSession";
 
 const NAVY  = "#0f2a52";
 const GREEN = "#1a5c3a";
@@ -127,6 +128,7 @@ export function RevampStep5DichiarazioniPage() {
   const isDocente = isA && tipologia === "docente";
   const accent    = isA ? NAVY : GREEN;
   const title     = isA ? "Albo A — Professionisti" : "Albo B — Aziende";
+  const registryType = isA ? "ALBO_A" : "ALBO_B";
 
   const [checks,       setChecks]       = useState<Checks>(() =>
     Object.fromEntries(DECLARATIONS.map(d => [d.id, false]))
@@ -152,7 +154,7 @@ export function RevampStep5DichiarazioniPage() {
     sessionStorage.setItem("revamp_s5_done", "true");
     if (auth?.token) {
       try {
-        const appId = sessionStorage.getItem("revamp_applicationId");
+        const appId = loadRevampApplicationIdForRegistry(registryType);
         if (appId) {
           const frontendPayload = { declarations: Object.entries(checks).filter(([, v]) => v).map(([k]) => k) };
           let apiPayload: Record<string, unknown> = { ...frontendPayload };
