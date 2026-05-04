@@ -18,6 +18,7 @@ import {
   Wrench,
 } from "lucide-react";
 import { Link, useLocation, useParams } from "react-router-dom";
+import { getAdminAuditEvents, type AdminAuditEventRow } from "../../api/adminAuditApi";
 import type { DashboardActivityEvent } from "../../api/adminDashboardEventsApi";
 import type { AdminRegistryProfileRow, RegistryProfileStatus } from "../../api/adminProfilesApi";
 import {
@@ -45,6 +46,21 @@ type DetailTab = "profilo" | "documenti" | "valutazioni" | "storico" | "note" | 
 type SectionPayload = Record<string, unknown>;
 
 type DocumentRow = { id: string; label: string; sectionLabel: string; url: string | null };
+type CommunicationRow = {
+  id: string;
+  title: string;
+  detail: string;
+  status: string;
+  occurredAt: string | null;
+  source: "workflow" | "email";
+};
+type HistoryRow = {
+  id: string;
+  title: string;
+  detail: string;
+  tone: "ok" | "warn" | "neutral";
+  occurredAt: string | null;
+};
 
 function parsePayload(payloadJson?: string | null): SectionPayload | null {
   if (!payloadJson) return null;
@@ -59,6 +75,30 @@ function scalar(v: unknown): string {
   if (typeof v === "string") return v.trim();
   if (typeof v === "number" || typeof v === "boolean") return String(v);
   return "";
+}
+
+function documentSectionLabel(sectionKey: string): string {
+  const normalized = sectionKey.trim().toUpperCase();
+  if (normalized === "S1" || normalized === "STEP_1_ANAGRAFICA") return "Anagrafica";
+  if (normalized === "S2" || normalized === "STEP_2_TIPOLOGIA") return "Tipologia";
+  if (normalized === "S3" || normalized === "S3A" || normalized === "S3B" || normalized === "STEP_3_COMPETENZE") return "Competenze";
+  if (normalized === "S4" || normalized === "STEP_4_DOCUMENTI") return "Documenti";
+  if (normalized === "S5" || normalized === "STEP_5_DICHIARAZIONI") return "Dichiarazioni";
+  return sectionKey;
+}
+
+function documentDownloadUrl(storageKey: unknown, applicationId: string | null | undefined): string | null {
+  const key = scalar(storageKey);
+  if (!key) return null;
+  if (key.startsWith("http://") || key.startsWith("https://") || key.startsWith("data:")) return key;
+  if (!applicationId || key === "upload-pending") return null;
+  return `/api/v2/applications/${encodeURIComponent(applicationId)}/attachments/download?storageKey=${encodeURIComponent(key)}`;
+}
+
+function isUploadedAttachment(value: Record<string, unknown> | null | undefined): value is Record<string, unknown> {
+  const fileName = scalar(value?.fileName);
+  const storageKey = scalar(value?.storageKey);
+  return Boolean(fileName && storageKey && storageKey !== "upload-pending");
 }
 
 function formatDate(v: string | null | undefined): string {
@@ -118,20 +158,165 @@ function parseDocuments(sections: RevampSectionSnapshot[], applicationId: string
   sections.forEach((section) => {
     const payload = parsePayload(section.payloadJson);
     if (!payload) return;
-    Object.entries(payload).forEach(([field, value]) => {
-      if (typeof value !== "string") return;
-      const trimmed = value.trim();
-      if (!trimmed) return;
-      let url: string | null = null;
-      if (trimmed.startsWith("http://") || trimmed.startsWith("https://") || trimmed.startsWith("data:")) {
-        url = trimmed;
-      } else if (applicationId && trimmed.length > 8 && !/\s/.test(trimmed)) {
-        url = `/api/v2/applications/${encodeURIComponent(applicationId)}/attachments/download?storageKey=${encodeURIComponent(trimmed)}`;
-      }
-      if (url) docs.push({ id: `${section.id}-${field}`, label: field, sectionLabel: section.sectionKey, url });
+
+    const profilePhoto = payload.profilePhotoAttachment as Record<string, unknown> | undefined;
+    if (isUploadedAttachment(profilePhoto)) {
+      docs.push({
+        id: `${section.id}-profile-photo`,
+        label: scalar(profilePhoto.fileName) || "Foto profilo",
+        sectionLabel: documentSectionLabel(section.sectionKey),
+        url: documentDownloadUrl(profilePhoto.storageKey, applicationId),
+      });
+    }
+
+    const attachments = Array.isArray(payload.attachments)
+      ? (payload.attachments as Array<Record<string, unknown>>)
+      : [];
+    attachments.forEach((attachment, index) => {
+      if (!isUploadedAttachment(attachment)) return;
+      const documentType = scalar(attachment.documentType);
+      const fileName = scalar(attachment.fileName);
+      docs.push({
+        id: `${section.id}-attachment-${index}`,
+        label: [documentType, fileName].filter(Boolean).join(" - ") || "Allegato",
+        sectionLabel: documentSectionLabel(section.sectionKey),
+        url: documentDownloadUrl(attachment.storageKey, applicationId),
+      });
     });
   });
   return docs;
+}
+
+function parseAuditMetadata(raw: string | null | undefined): Record<string, string> {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return Object.fromEntries(
+      Object.entries(parsed as Record<string, unknown>)
+        .filter(([, value]) => value !== null && value !== undefined)
+        .map(([key, value]) => [key, String(value)])
+    );
+  } catch {
+    return {};
+  }
+}
+
+function workflowCommunication(event: AdminAuditEventRow): CommunicationRow | null {
+  const meta = parseAuditMetadata(event.metadataJson);
+  const key = event.eventKey ?? "";
+  if (key === "revamp.application.submitted") {
+    return {
+      id: event.id,
+      title: "Candidatura ricevuta",
+      detail: meta.protocolCode ? `Codice protocollo: ${meta.protocolCode}` : "La candidatura e stata inviata dal fornitore.",
+      status: "Workflow",
+      occurredAt: event.occurredAt,
+      source: "workflow"
+    };
+  }
+  if (key === "revamp.review.integration_requested") {
+    return {
+      id: event.id,
+      title: "Richiesta integrazione inviata",
+      detail: "Sono stati richiesti documenti o informazioni mancanti al fornitore.",
+      status: "Integrazione",
+      occurredAt: event.occurredAt,
+      source: "workflow"
+    };
+  }
+  if (key === "revamp.application.integration.answered") {
+    return {
+      id: event.id,
+      title: "Integrazione ricevuta",
+      detail: "Il fornitore ha risposto alla richiesta di integrazione.",
+      status: "Ricevuta",
+      occurredAt: event.occurredAt,
+      source: "workflow"
+    };
+  }
+  if (key === "revamp.review.decided") {
+    const approved = meta.decision === "APPROVED";
+    return {
+      id: event.id,
+      title: approved ? "Candidatura approvata" : "Candidatura non approvata",
+      detail: approved ? "Il fornitore e stato approvato nell'albo." : "La candidatura e stata chiusa con esito negativo.",
+      status: approved ? "Approvata" : "Non approvata",
+      occurredAt: event.occurredAt,
+      source: "workflow"
+    };
+  }
+  return null;
+}
+
+function applicationHistoryEvent(event: AdminAuditEventRow): HistoryRow | null {
+  const meta = parseAuditMetadata(event.metadataJson);
+  const key = event.eventKey ?? "";
+  if (key === "revamp.application.created") {
+    return {
+      id: event.id,
+      title: "Bozza candidatura creata",
+      detail: meta.applicantName ? `Creata da ${meta.applicantName}.` : "La candidatura e stata avviata.",
+      tone: "neutral",
+      occurredAt: event.occurredAt
+    };
+  }
+  if (key === "revamp.application.submitted") {
+    return {
+      id: event.id,
+      title: "Candidatura inviata",
+      detail: meta.protocolCode ? `Protocollo ${meta.protocolCode}.` : "La candidatura e stata inviata.",
+      tone: "neutral",
+      occurredAt: event.occurredAt
+    };
+  }
+  if (key === "revamp.review.opened") {
+    return {
+      id: event.id,
+      title: "Presa in carico",
+      detail: meta.actorName ? `Pratica presa in carico da ${meta.actorName}.` : "La pratica e stata presa in carico.",
+      tone: "neutral",
+      occurredAt: event.occurredAt
+    };
+  }
+  if (key === "revamp.review.verified") {
+    return {
+      id: event.id,
+      title: "Verifica completata",
+      detail: meta.verificationOutcome ? `Esito verifica: ${meta.verificationOutcome}.` : "La verifica amministrativa e stata completata.",
+      tone: "ok",
+      occurredAt: event.occurredAt
+    };
+  }
+  if (key === "revamp.review.integration_requested") {
+    return {
+      id: event.id,
+      title: "Integrazione richiesta",
+      detail: "La pratica e stata sospesa in attesa di documenti o informazioni mancanti.",
+      tone: "warn",
+      occurredAt: event.occurredAt
+    };
+  }
+  if (key === "revamp.application.integration.answered") {
+    return {
+      id: event.id,
+      title: "Integrazione ricevuta",
+      detail: "Il fornitore ha inviato le integrazioni richieste.",
+      tone: "neutral",
+      occurredAt: event.occurredAt
+    };
+  }
+  if (key === "revamp.review.decided") {
+    const approved = meta.decision === "APPROVED";
+    return {
+      id: event.id,
+      title: approved ? "Profilo approvato" : "Candidatura non approvata",
+      detail: approved ? "La candidatura e stata approvata e proiettata nel profilo albo." : "La pratica e stata chiusa con esito negativo.",
+      tone: approved ? "ok" : "warn",
+      occurredAt: event.occurredAt
+    };
+  }
+  return null;
 }
 
 function shouldRefreshProfileDetail(event: DashboardActivityEvent, profileId: string, applicationId: string | null | undefined): boolean {
@@ -164,6 +349,7 @@ export function AdminRegistryProfileDetailPage() {
   const [sections, setSections] = useState<RevampSectionSnapshot[]>([]);
   const [timeline, setTimeline] = useState<AdminProfileTimelineEvent[]>([]);
   const [notifications, setNotifications] = useState<AdminNotificationEvent[]>([]);
+  const [applicationAudit, setApplicationAudit] = useState<AdminAuditEventRow[]>([]);
   const [evaluationAggregate, setEvaluationAggregate] = useState<AdminEvaluationAggregate | null>(null);
   const [loading, setLoading] = useState(false);
   const [actionBusy, setActionBusy] = useState<"suspend" | "reactivate" | null>(null);
@@ -185,8 +371,10 @@ export function AdminRegistryProfileDetailPage() {
       window.open(resolvedUrl, "_blank", "noopener,noreferrer");
       return;
     }
-    const win = window.open("about:blank", "_blank", "noopener,noreferrer");
-    if (win) win.document.body.innerHTML = "<p style=\"font-family:sans-serif;padding:24px\">Apertura documento in corso…</p>";
+    const win = window.open("", "_blank");
+    if (win) {
+      win.document.body.innerHTML = "<p style=\"font-family:sans-serif;padding:24px\">Apertura documento in corso...</p>";
+    }
     try {
       const res = await fetch(`${API_BASE_URL}${resolvedUrl}`, {
         headers: token ? { Authorization: `Bearer ${token}` } : undefined
@@ -222,17 +410,22 @@ export function AdminRegistryProfileDetailPage() {
       setTimeline(timelineData);
       setNotifications(notificationData);
       if (profileData.applicationId) {
-        const sectionsData = await getRevampApplicationSections(profileData.applicationId, token).catch(() => []);
+        const [sectionsData, auditData] = await Promise.all([
+          getRevampApplicationSections(profileData.applicationId, token).catch(() => []),
+          getAdminAuditEvents(token, { entityType: "REVAMP_APPLICATION", entityId: profileData.applicationId }).catch(() => [])
+        ]);
         setSections(sectionsData);
+        setApplicationAudit(auditData);
       } else {
         setSections([]);
+        setApplicationAudit([]);
       }
       const aggregate = await getAdminEvaluationSummary(profileId, token).catch(() => null);
       setEvaluationAggregate(aggregate);
     } catch (error) {
       const message = error instanceof HttpError ? error.message : "Caricamento scheda profilo non riuscito.";
       setToast({ message, type: "error" });
-      setProfile(null); setSections([]); setTimeline([]); setNotifications([]); setEvaluationAggregate(null);
+      setProfile(null); setSections([]); setTimeline([]); setNotifications([]); setApplicationAudit([]); setEvaluationAggregate(null);
     } finally {
       refreshInFlightRef.current = false;
       if (showLoading) setLoading(false);
@@ -289,6 +482,34 @@ export function AdminRegistryProfileDetailPage() {
   const profileName = profile?.displayName || (isAlboB ? "Azienda" : "Professionista");
   const score = typeof profile?.aggregateScore === "number" ? profile.aggregateScore : 0;
   const documents = parseDocuments(sections, profile?.applicationId);
+  const historyRows: HistoryRow[] = [
+    ...timeline.map((event) => {
+      const copy = timelineEventCopy(event);
+      return {
+        id: event.id,
+        title: copy.title,
+        detail: copy.detail,
+        tone: copy.tone,
+        occurredAt: event.occurredAt
+      };
+    }),
+    ...applicationAudit
+      .map(applicationHistoryEvent)
+      .filter((item): item is HistoryRow => Boolean(item))
+  ].sort((a, b) => Date.parse(b.occurredAt ?? "") - Date.parse(a.occurredAt ?? ""));
+  const communicationRows: CommunicationRow[] = [
+    ...applicationAudit
+      .map(workflowCommunication)
+      .filter((item): item is CommunicationRow => Boolean(item)),
+    ...notifications.map((item) => ({
+      id: item.id,
+      title: item.eventKey,
+      detail: `Destinatario: ${item.recipient || "n/d"} · Template: ${item.templateKey || "n/d"} v${item.templateVersion ?? "n/d"}`,
+      status: item.deliveryStatus,
+      occurredAt: item.sentAt ?? item.createdAt,
+      source: "email" as const
+    }))
+  ].sort((a, b) => Date.parse(b.occurredAt ?? "") - Date.parse(a.occurredAt ?? ""));
 
   const s1 = parsePayload(sections.find((s) => s.sectionKey === "S1")?.payloadJson);
   const s2 = parsePayload(sections.find((s) => s.sectionKey === "S2")?.payloadJson);
@@ -495,25 +716,22 @@ export function AdminRegistryProfileDetailPage() {
                     <p className="subtle">Cosa e successo al profilo, in ordine cronologico.</p>
                   </div>
                 </div>
-                {timeline.length === 0 ? (
+                {historyRows.length === 0 ? (
                   <p className="subtle">Nessun evento storico disponibile.</p>
                 ) : (
                   <div className="profile-history-list">
-                    {timeline.map((event) => {
-                      const copy = timelineEventCopy(event);
-                      return (
-                        <article key={event.id} className={`admin-profile-history-item tone-${copy.tone}`}>
-                          <span className="admin-profile-history-marker" aria-hidden="true" />
-                          <div className="admin-profile-history-content">
-                            <div className="history-event-header">
-                              <strong className="history-event-title">{copy.title}</strong>
-                              <span className="history-event-date">{formatDateTime(event.occurredAt)}</span>
-                            </div>
-                            <p className="history-event-reason">{copy.detail}</p>
+                    {historyRows.map((event) => (
+                      <article key={event.id} className={`admin-profile-history-item tone-${event.tone}`}>
+                        <span className="admin-profile-history-marker" aria-hidden="true" />
+                        <div className="admin-profile-history-content">
+                          <div className="history-event-header">
+                            <strong className="history-event-title">{event.title}</strong>
+                            <span className="history-event-date">{formatDateTime(event.occurredAt)}</span>
                           </div>
-                        </article>
-                      );
-                    })}
+                          <p className="history-event-reason">{event.detail}</p>
+                        </div>
+                      </article>
+                    ))}
                   </div>
                 )}
               </div>
@@ -552,21 +770,20 @@ export function AdminRegistryProfileDetailPage() {
             {tab === "comunicazioni" ? (
               <div className="panel">
                 <h4><Mail className="h-4 w-4" /> Comunicazioni inviate</h4>
-                {notifications.length === 0 ? (
+                {communicationRows.length === 0 ? (
                   <p className="subtle">Nessuna comunicazione registrata per questo profilo.</p>
                 ) : (
                   <div className="profile-history-list">
-                    {notifications.map((item) => (
+                    {communicationRows.map((item) => (
                       <article key={item.id} className="admin-profile-history-item">
                         <div className="history-event-header">
-                          <strong className="history-event-key">{item.eventKey}</strong>
-                          <span className={`comm-status-badge ${item.deliveryStatus === "DELIVERED" ? "badge-ok" : "badge-neutral"}`}>
-                            {item.deliveryStatus}
+                          <strong className="history-event-key">{item.title}</strong>
+                          <span className={`comm-status-badge ${item.status === "DELIVERED" || item.status === "Ricevuta" || item.status === "Approvata" ? "badge-ok" : "badge-neutral"}`}>
+                            {item.status}
                           </span>
                         </div>
-                        <p className="subtle">Destinatario: {item.recipient || "—"}</p>
-                        <p className="subtle">Template: {item.templateKey || "—"} v{item.templateVersion ?? "—"}</p>
-                        <p className="subtle">Inviata: {formatDate(item.sentAt)}</p>
+                        <p className="subtle">{item.detail}</p>
+                        <p className="subtle">{item.source === "email" ? "Email" : "Workflow"}: {formatDateTime(item.occurredAt)}</p>
                       </article>
                     ))}
                   </div>

@@ -1,6 +1,6 @@
 import { ChangeEvent, useEffect, useState } from "react";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, ArrowRight, Save } from "lucide-react";
+import { ArrowLeft, ArrowRight, CheckCircle, Save } from "lucide-react";
 import { useAuth } from "../../auth/AuthContext";
 import { getMyLatestRevampApplication, getRevampApplicationSections, saveRevampApplicationSection } from "../../api/revampApplicationApi";
 
@@ -45,6 +45,34 @@ const CARDS_B: CardDef[] = [
   { id: "studio",      title: "Studi professionali associati",        tag: "Professioni regolamentate", desc: "Studi legali, commercialisti, consulenti del lavoro associati" },
   { id: "altro",       title: "Altra tipologia aziendale",            tag: "Specifica il tuo ambito",   desc: "Compila il codice ATECO per la tua categoria" },
 ];
+
+const TIPO_TO_PROFESSIONAL: Record<string, string> = {
+  docente: "DOCENTE_FORMATORE",
+  ricercatore: "DOCENTE_FORMATORE",
+  psicologo: "PSICOLOGO_COACH",
+  coach: "PSICOLOGO_COACH",
+  mediatore: "PSICOLOGO_COACH",
+  consulente_hr: "CONSULENTE",
+  cdo_lavoro: "CONSULENTE",
+  commercialista: "CONSULENTE",
+  avvocato: "CONSULENTE",
+  digital: "CONSULENTE",
+  finanza: "CONSULENTE",
+  orientatore: "CONSULENTE",
+  altro: "ALTRO"
+};
+
+function professionalTypeForTipologia(tipologia: string | null): string {
+  return tipologia ? (TIPO_TO_PROFESSIONAL[tipologia] ?? "CONSULENTE") : "";
+}
+
+function professionalTypesForTipologie(tipologie: Iterable<string>): string[] {
+  return Array.from(new Set(
+    Array.from(tipologie)
+      .map(professionalTypeForTipologia)
+      .filter(Boolean)
+  ));
+}
 
 function infoMessage(cardId: string, isA: boolean): string {
   if (!isA) {
@@ -102,6 +130,7 @@ function StepBar({ active, accent }: { active: number; accent: string }) {
 
 /* ─── page header ──────────────────────────────── */
 function PageHeader({ title, subtitle, badge, onSave }: { title: string; subtitle: string; badge: string; onSave: () => void }) {
+  const isSaved = badge.startsWith("Bozza salvata");
   return (
     <div style={{ background: "#fff", borderBottom: "1px solid #e5e7eb", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 32px" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -116,8 +145,8 @@ function PageHeader({ title, subtitle, badge, onSave }: { title: string; subtitl
         <div style={{ fontWeight: 700, fontSize: "1rem", color: "#1e293b" }}>{title}</div>
         <div style={{ fontSize: "0.75rem", color: MUTED }}>{subtitle}</div>
       </div>
-      <button type="button" onClick={onSave} style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 16px", background: "#fff", border: "1.5px solid #d1d5db", borderRadius: 6, fontWeight: 600, fontSize: "0.82rem", cursor: "pointer", color: "#374151" }}>
-        <Save size={14} /> {badge}
+      <button type="button" className={`wizard-save-button${isSaved ? " is-saved" : ""}`} onClick={onSave} style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 16px", background: "#fff", border: "1.5px solid #d1d5db", borderRadius: 6, fontWeight: 600, fontSize: "0.82rem", cursor: "pointer", color: "#374151" }}>
+        {isSaved ? <CheckCircle size={14} /> : <Save size={14} />} {badge}
       </button>
     </div>
   );
@@ -240,18 +269,13 @@ export function RevampStep2TipologiaPage() {
     try {
       const appId = sessionStorage.getItem("revamp_applicationId");
       if (!appId) return;
-      const TIPO_TO_PROFESSIONAL: Record<string, string> = {
-        docente: "DOCENTE_FORMATORE", ricercatore: "DOCENTE_FORMATORE",
-        psicologo: "PSICOLOGO_COACH",
-        cdo_lavoro: "CONSULENTE", commercialista: "CONSULENTE",
-        avvocato: "CONSULENTE", finanza: "CONSULENTE",
-        orientatore: "CONSULENTE", altro: "ALTRO",
-      };
-      const professionalType = selected ? (TIPO_TO_PROFESSIONAL[selected] ?? "ALTRO") : "";
+      const professionalType = professionalTypeForTipologia(selected);
+      const secondaryProfessionalTypes = professionalTypesForTipologie(secondaryRoles);
       await saveRevampApplicationSection(appId, "S2", JSON.stringify({
         tipologia: selected ?? "",
         professionalType,
         multiRuoli: Array.from(secondaryRoles),
+        secondaryProfessionalTypes,
         atecoCode: atecoQuery,
       }), false, auth.token);
       handleSave();
@@ -281,16 +305,15 @@ export function RevampStep2TipologiaPage() {
       try {
         const appId = sessionStorage.getItem("revamp_applicationId");
         if (appId) {
-          const TIPO_TO_PROFESSIONAL: Record<string, string> = {
-            docente: "DOCENTE_FORMATORE", ricercatore: "DOCENTE_FORMATORE",
-            psicologo: "PSICOLOGO_COACH", coach: "PSICOLOGO_COACH",
-            mediatore: "PSICOLOGO_COACH",
-            cdo_lavoro: "CONSULENTE", commercialista: "CONSULENTE",
-            avvocato: "CONSULENTE", finanza: "CONSULENTE",
-            orientatore: "CONSULENTE", altro: "ALTRO",
-          };
-          const professionalType = TIPO_TO_PROFESSIONAL[selected!] ?? "ALTRO";
-          await saveRevampApplicationSection(appId, "S2", JSON.stringify({ tipologia: selected, professionalType, multiRuoli: Array.from(multiRuoli), atecoCode: ateco }), true, auth.token);
+          const professionalType = professionalTypeForTipologia(selected);
+          const secondaryProfessionalTypes = professionalTypesForTipologie(multiRuoli);
+          await saveRevampApplicationSection(appId, "S2", JSON.stringify({
+            tipologia: selected,
+            professionalType,
+            multiRuoli: Array.from(multiRuoli),
+            secondaryProfessionalTypes,
+            atecoCode: ateco
+          }), true, auth.token);
         }
       } catch {
         window.alert("Salvataggio non riuscito. Controlla i dati e riprova.");
@@ -330,11 +353,6 @@ export function RevampStep2TipologiaPage() {
                 Seleziona la tua tipologia principale. La scelta determina le sezioni successive del questionario.
               </p>
             </div>
-            {savedAt ? (
-              <span style={{ display: "flex", alignItems: "center", gap: 5, fontSize: "0.75rem", color: "#16a34a", background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 4, padding: "3px 10px", whiteSpace: "nowrap" }}>
-                ✓ Bozza salvata {savedAt}
-              </span>
-            ) : null}
           </div>
 
           {/* card grid — 4 columns so 11 cards fill 3 rows naturally */}
@@ -429,8 +447,8 @@ export function RevampStep2TipologiaPage() {
       </div>
 
       {/* ── Bottom navigation ── */}
-      <div style={{ background: "#fff", borderTop: "1px solid #e5e7eb", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 40px", position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 10 }}>
-        <Link
+      <div className="wizard-bottom-nav" style={{ background: "#fff", borderTop: "1px solid #e5e7eb", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 40px", position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 10 }}>
+        <Link className="wizard-nav-button wizard-nav-button-prev"
           to={`/apply/${registryParam}`}
           style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 20px", background: "#fff", border: `1.5px solid ${accent}`, borderRadius: 6, fontWeight: 600, fontSize: "0.85rem", color: accent, textDecoration: "none" }}
         >
@@ -444,7 +462,7 @@ export function RevampStep2TipologiaPage() {
           </div>
         </div>
 
-        <button
+        <button className="wizard-nav-button wizard-nav-button-next"
           type="button"
           onClick={handleNext}
           style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 20px", background: accent, color: "#fff", border: "none", borderRadius: 6, fontWeight: 600, fontSize: "0.85rem", cursor: "pointer" }}

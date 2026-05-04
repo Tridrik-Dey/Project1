@@ -20,13 +20,13 @@ function firstBool(...values: unknown[]): boolean | null {
 
 export function AlboASection5({ payload }: { payload: P | null }) {
   if (!payload) return (
-    <SectionCard icon={<ShieldCheck className="h-5 w-5" />} title="Sezione 5 - Dichiarazioni e Consensi" accent="orange">
+    <SectionCard icon={<ShieldCheck className="h-5 w-5" />} title="Sezione 5 - Dichiarazioni e Consensi" accent="orange" layout="wide">
       <p className="profile-empty">Nessun dato disponibile per questa sezione.</p>
     </SectionCard>
   );
 
   return (
-    <SectionCard icon={<ShieldCheck className="h-5 w-5" />} title="Sezione 5 - Dichiarazioni e Consensi" accent="orange">
+    <SectionCard icon={<ShieldCheck className="h-5 w-5" />} title="Sezione 5 - Dichiarazioni e Consensi" accent="orange" layout="wide">
       <BooleanChecklist items={[
         { label: "Assenza condanne penali ostative", value: firstBool(payload.noCriminalConvictions, payload.declarationNoCriminalConvictions) },
         { label: "Assenza conflitti di interesse", value: firstBool(payload.noConflictOfInterest, payload.declarationNoConflict) },

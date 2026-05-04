@@ -165,6 +165,14 @@ public class RevampReviewWorkflowService {
             throw new IllegalArgumentException("Verification note is required for outcome: " + verificationOutcome.name());
         }
 
+        if (reviewCase.getAssignedToUser() != null && verifiedByUserId != null
+                && !reviewCase.getAssignedToUser().getId().equals(verifiedByUserId)) {
+            String callerRole = resolveActorGovernanceRole(verifiedByUserId);
+            if (!"SUPER_ADMIN".equals(callerRole)) {
+                throw new IllegalStateException("Solo il revisore assegnato può verificare questa pratica.");
+            }
+        }
+
         if (verifiedByUserId != null) {
             User verifiedBy = userRepository.findById(verifiedByUserId)
                     .orElseThrow(() -> new EntityNotFoundException("User", verifiedByUserId));

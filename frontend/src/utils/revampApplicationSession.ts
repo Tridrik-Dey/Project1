@@ -29,3 +29,13 @@ export function clearRevampApplicationSession(): void {
   window.sessionStorage.removeItem(STORAGE_KEY);
 }
 
+export function clearRevampWizardSession(): void {
+  if (typeof window === "undefined") return;
+  const toRemove: string[] = [];
+  for (let i = 0; i < window.sessionStorage.length; i++) {
+    const key = window.sessionStorage.key(i);
+    if (key && key.startsWith("revamp_")) toRemove.push(key);
+  }
+  toRemove.forEach(k => window.sessionStorage.removeItem(k));
+}
+

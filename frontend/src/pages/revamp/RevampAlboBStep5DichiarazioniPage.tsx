@@ -274,8 +274,8 @@ export function RevampAlboBStep5DichiarazioniPage() {
       </div>
 
       {/* Bottom nav */}
-      <div style={{ background: "#fff", borderTop: "1px solid #e5e7eb", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 40px", position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 10 }}>
-        <Link to="/apply/albo-b/step/4" style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 20px", background: "#fff", border: `1.5px solid ${GREEN}`, borderRadius: 6, fontWeight: 600, fontSize: "0.85rem", color: GREEN, textDecoration: "none" }}>
+      <div className="wizard-bottom-nav" style={{ background: "#fff", borderTop: "1px solid #e5e7eb", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 40px", position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 10 }}>
+        <Link className="wizard-nav-button wizard-nav-button-prev" to="/apply/albo-b/step/4" style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 20px", background: "#fff", border: `1.5px solid ${GREEN}`, borderRadius: 6, fontWeight: 600, fontSize: "0.85rem", color: GREEN, textDecoration: "none" }}>
           <ArrowLeft size={15} /> Sezione precedente
         </Link>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
@@ -284,7 +284,7 @@ export function RevampAlboBStep5DichiarazioniPage() {
             <div style={{ width: "100%", height: "100%", background: GREEN, borderRadius: 2 }} />
           </div>
         </div>
-        <button
+        <button className="wizard-nav-button wizard-nav-button-next"
           type="button"
           onClick={() => void handleInvia()}
           disabled={triedSubmit && !allRequiredChecked()}

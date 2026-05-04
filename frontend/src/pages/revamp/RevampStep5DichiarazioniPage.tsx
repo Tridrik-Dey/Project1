@@ -292,10 +292,10 @@ export function RevampStep5DichiarazioniPage() {
       </div>
 
       {/* ── Bottom nav ── */}
-      <div style={{ background: "#fff", borderTop: "1px solid #e5e7eb", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 36px", position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 10 }}>
-        <Link
+      <div className="wizard-bottom-nav" style={{ background: "#fff", borderTop: "1px solid #e5e7eb", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 36px", position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 10 }}>
+        <Link className="wizard-nav-button wizard-nav-button-prev"
           to={`/apply/${registryParam}/step/4`}
-          style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 18px", background: "#fff", border: `1.5px solid ${accent}`, borderRadius: 6, fontWeight: 600, fontSize: "0.84rem", color: accent, textDecoration: "none" }}
+          style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 20px", background: "#fff", border: `1.5px solid ${accent}`, borderRadius: 6, fontWeight: 600, fontSize: "0.84rem", color: accent, textDecoration: "none" }}
         >
           <ArrowLeft size={14} /> Sezione precedente
         </Link>
@@ -316,7 +316,7 @@ export function RevampStep5DichiarazioniPage() {
           )}
         </div>
 
-        <button
+        <button className="wizard-nav-button wizard-nav-button-next"
           type="button"
           onClick={handleInvia}
           style={{

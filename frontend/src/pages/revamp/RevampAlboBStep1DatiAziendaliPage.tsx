@@ -1,6 +1,6 @@
 import { ChangeEvent, FormEvent, useEffect, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import { ArrowLeft, ArrowRight, Save } from "lucide-react";
+import { ArrowLeft, ArrowRight, CheckCircle, Save } from "lucide-react";
 import { useAuth } from "../../auth/AuthContext";
 import { createRevampApplicationDraft, getMyLatestRevampApplication, getRevampApplicationSections, saveRevampApplicationSection } from "../../api/revampApplicationApi";
 
@@ -386,8 +386,8 @@ export function RevampAlboBStep1DatiAziendaliPage() {
           <div style={{ fontSize: "0.75rem", color: MUTED }}>Questionario di iscrizione</div>
         </div>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
-          <button type="button" onClick={() => void handleSaveDraft()} style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 16px", background: "#fff", border: "1.5px solid #d1d5db", borderRadius: 6, fontWeight: 600, fontSize: "0.82rem", cursor: "pointer", color: "#374151" }}>
-            <Save size={14} /> {savedAt ? `Bozza salvata ${savedAt}` : "Salva bozza"}
+          <button type="button" className={`wizard-save-button${savedAt ? " is-saved" : ""}`} onClick={() => void handleSaveDraft()} style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 16px", background: "#fff", border: "1.5px solid #d1d5db", borderRadius: 6, fontWeight: 600, fontSize: "0.82rem", cursor: "pointer", color: "#374151" }}>
+            {savedAt ? <CheckCircle size={14} /> : <Save size={14} />} {savedAt ? `Bozza salvata ${savedAt}` : "Salva bozza"}
           </button>
           {saveError ? <span style={{ fontSize: "0.72rem", color: "#dc2626" }}>{saveError}</span> : null}
         </div>
@@ -404,7 +404,6 @@ export function RevampAlboBStep1DatiAziendaliPage() {
                 <h2 style={{ fontSize: "1.1rem", fontWeight: 700, color: "#1e293b", margin: 0 }}>Sezione 1 — Dati Aziendali</h2>
                 <p style={{ fontSize: "0.82rem", color: MUTED, margin: "4px 0 0" }}>Compila i dati dell'organizzazione. I campi con <span style={{ color: ERR }}>*</span> sono obbligatori.</p>
               </div>
-              {savedAt ? <span style={{ fontSize: "0.75rem", color: "#16a34a", background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 4, padding: "3px 10px" }}>✓ Bozza salvata {savedAt}</span> : null}
             </div>
             <div style={{ height: 1, background: "#f3f4f6", margin: "16px 0 4px" }} />
 
@@ -480,8 +479,8 @@ export function RevampAlboBStep1DatiAziendaliPage() {
         </div>
 
         {/* Bottom nav */}
-        <div style={{ background: "#fff", borderTop: "1px solid #e5e7eb", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 40px", position: "sticky", bottom: 0 }}>
-          <Link to="/apply" style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 20px", background: "#fff", border: `1.5px solid ${GREEN}`, borderRadius: 6, fontWeight: 600, fontSize: "0.85rem", color: GREEN, textDecoration: "none" }}>
+        <div className="wizard-bottom-nav" style={{ background: "#fff", borderTop: "1px solid #e5e7eb", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 40px", position: "sticky", bottom: 0 }}>
+          <Link className="wizard-nav-button wizard-nav-button-prev" to="/apply" style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 20px", background: "#fff", border: `1.5px solid ${GREEN}`, borderRadius: 6, fontWeight: 600, fontSize: "0.85rem", color: GREEN, textDecoration: "none" }}>
             <ArrowLeft size={15} /> Torna alla selezione
           </Link>
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
@@ -490,7 +489,7 @@ export function RevampAlboBStep1DatiAziendaliPage() {
               <div style={{ width: "20%", height: "100%", background: GREEN, borderRadius: 2 }} />
             </div>
           </div>
-          <button type="submit" style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 20px", background: GREEN, color: "#fff", border: "none", borderRadius: 6, fontWeight: 600, fontSize: "0.85rem", cursor: "pointer" }}>
+          <button className="wizard-nav-button wizard-nav-button-next" type="submit" style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 20px", background: GREEN, color: "#fff", border: "none", borderRadius: 6, fontWeight: 600, fontSize: "0.85rem", cursor: "pointer" }}>
             Sezione successiva <ArrowRight size={15} />
           </button>
         </div>

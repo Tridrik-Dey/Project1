@@ -37,6 +37,16 @@ export interface RevampApplicationCommunication {
   occurredAt: string;
 }
 
+export interface RevampIntegrationRequestSummary {
+  id: string;
+  reviewCaseId: string;
+  status: string;
+  dueAt: string;
+  requestMessage: string;
+  requestedItemsJson: unknown;
+  updatedAt: string;
+}
+
 export interface OtpChallengeDispatchResponse {
   challengeId: string;
   expiresAt: string;
@@ -108,6 +118,17 @@ export function getRevampApplicationCommunications(
   token: string
 ): Promise<RevampApplicationCommunication[]> {
   return apiRequest<RevampApplicationCommunication[]>(`${BASE}/${applicationId}/communications`, {}, token);
+}
+
+export function getOpenRevampIntegrationRequest(
+  applicationId: string,
+  token: string
+): Promise<RevampIntegrationRequestSummary | null> {
+  return apiRequest<RevampIntegrationRequestSummary | null>(
+    `${BASE}/${applicationId}/integration-request/open`,
+    {},
+    token
+  );
 }
 
 export function saveRevampApplicationSection(

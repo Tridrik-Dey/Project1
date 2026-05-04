@@ -1,6 +1,6 @@
 import { ChangeEvent, useEffect, useState } from "react";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, ArrowRight, Info, Save } from "lucide-react";
+import { ArrowLeft, ArrowRight, CheckCircle, Info, Save } from "lucide-react";
 import { useAuth } from "../../auth/AuthContext";
 import { getMyLatestRevampApplication, getRevampApplicationSections, saveRevampApplicationSection } from "../../api/revampApplicationApi";
 
@@ -231,8 +231,8 @@ function PageHeader({ title, subtitle, savedAt, onSave }: { title: string; subti
         <div style={{ fontWeight: 700, fontSize: "0.95rem", color: "#1e293b" }}>{title}</div>
         <div style={{ fontSize: "0.73rem", color: MUTED }}>{subtitle}</div>
       </div>
-      <button type="button" onClick={onSave} style={{ display: "flex", alignItems: "center", gap: 5, padding: "6px 14px", background: "#fff", border: "1.5px solid #d1d5db", borderRadius: 6, fontWeight: 600, fontSize: "0.8rem", cursor: "pointer", color: "#374151" }}>
-        <Save size={13} /> {savedAt ? `Bozza salvata ${savedAt}` : "Salva bozza"}
+      <button type="button" className={`wizard-save-button${savedAt ? " is-saved" : ""}`} onClick={onSave} style={{ display: "flex", alignItems: "center", gap: 5, padding: "6px 14px", background: "#fff", border: "1.5px solid #d1d5db", borderRadius: 6, fontWeight: 600, fontSize: "0.8rem", cursor: "pointer", color: "#374151" }}>
+        {savedAt ? <CheckCircle size={13} /> : <Save size={13} />} {savedAt ? `Bozza salvata ${savedAt}` : "Salva bozza"}
       </button>
     </div>
   );
@@ -687,8 +687,8 @@ export function RevampStep3CompetenzePage() {
       </div>
 
       {/* ── Bottom nav ── */}
-      <div style={{ background: "#fff", borderTop: "1px solid #e5e7eb", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 36px", position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 10 }}>
-        <Link to={`/apply/${registryParam}/step/2`} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 18px", background: "#fff", border: `1.5px solid ${accent}`, borderRadius: 6, fontWeight: 600, fontSize: "0.84rem", color: accent, textDecoration: "none" }}>
+      <div className="wizard-bottom-nav" style={{ background: "#fff", borderTop: "1px solid #e5e7eb", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 36px", position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 10 }}>
+        <Link className="wizard-nav-button wizard-nav-button-prev" to={`/apply/${registryParam}/step/2`} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 20px", background: "#fff", border: `1.5px solid ${accent}`, borderRadius: 6, fontWeight: 600, fontSize: "0.84rem", color: accent, textDecoration: "none" }}>
           <ArrowLeft size={14} /> Sezione precedente
         </Link>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
@@ -697,7 +697,7 @@ export function RevampStep3CompetenzePage() {
             <div style={{ width: "60%", height: "100%", background: accent, borderRadius: 2 }} />
           </div>
         </div>
-        <button type="button" onClick={handleNext} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 18px", background: accent, color: "#fff", border: "none", borderRadius: 6, fontWeight: 600, fontSize: "0.84rem", cursor: "pointer" }}>
+        <button className="wizard-nav-button wizard-nav-button-next" type="button" onClick={handleNext} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 18px", background: accent, color: "#fff", border: "none", borderRadius: 6, fontWeight: 600, fontSize: "0.84rem", cursor: "pointer" }}>
           Sezione successiva <ArrowRight size={14} />
         </button>
       </div>

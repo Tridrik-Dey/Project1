@@ -181,6 +181,27 @@ export function RevampApplicationStep1Page() {
     return t("revamp.step.common.saveState.idle");
   }, [lastSavedAt, saveState, t]);
 
+  const liveDisplayName = registryType === "ALBO_A"
+    ? [alboA.firstName, alboA.lastName].map((part) => part.trim()).filter(Boolean).join(" ")
+    : registryType === "ALBO_B"
+      ? alboB.companyName.trim()
+      : "";
+  const identityName = liveDisplayName || auth?.email || "Utente";
+  const identityInitials = registryType === "ALBO_A"
+    ? `${alboA.firstName.trim().charAt(0)}${alboA.lastName.trim().charAt(0)}`.toUpperCase() || identityName.slice(0, 2).toUpperCase()
+    : identityName.slice(0, 2).toUpperCase();
+
+  useEffect(() => {
+    if (!registryType) return;
+    sessionStorage.setItem("supplier_identity_preview", JSON.stringify({
+      name: identityName,
+      initials: identityInitials
+    }));
+    window.dispatchEvent(new CustomEvent("supplier:identity-preview", {
+      detail: { name: identityName, initials: identityInitials }
+    }));
+  }, [identityInitials, identityName, registryType]);
+
   useEffect(() => {
     async function bootstrap() {
       if (!applicationId || !auth?.token) return;

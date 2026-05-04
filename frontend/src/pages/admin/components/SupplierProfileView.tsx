@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import type { RevampSectionSnapshot } from "../../../api/revampApplicationApi";
 import { AlboASection1 } from "./alboA/AlboASection1";
 import { AlboASection2 } from "./alboA/AlboASection2";
@@ -37,66 +37,6 @@ function findSection(sections: RevampSectionSnapshot[], ...keys: string[]): Sect
 interface ColEntry {
   key: string;
   node: ReactNode;
-}
-
-interface BalancedColumnsProps {
-  entries: ColEntry[];
-}
-
-/** Renders entries in two columns balanced by actual rendered height.
- *  Uses a hidden measurement pass (useLayoutEffect) so no flicker occurs. */
-function BalancedColumns({ entries }: BalancedColumnsProps) {
-  const measureRef = useRef<HTMLDivElement>(null);
-  const [columns, setColumns] = useState<[ColEntry[], ColEntry[]] | null>(null);
-  const [measuredKey, setMeasuredKey] = useState("");
-
-  const currentKey = entries.map((e) => e.key).join(",");
-  const needsMeasure = currentKey !== measuredKey;
-
-  // Runs after every commit but exits early once measured.
-  // useLayoutEffect fires before the browser paints, so the measurement
-  // pass is never visible to the user.
-  useLayoutEffect(() => {
-    if (!needsMeasure || !measureRef.current) return;
-
-    const cards = Array.from(measureRef.current.children) as HTMLElement[];
-    const heights = cards.map((el) => el.getBoundingClientRect().height);
-
-    // Greedy sequential bin-packing using real heights
-    const left: ColEntry[] = [];
-    const right: ColEntry[] = [];
-    let wL = 0;
-    let wR = 0;
-    for (let i = 0; i < entries.length; i++) {
-      const h = heights[i] ?? 0;
-      if (wL <= wR) { left.push(entries[i]); wL += h; }
-      else           { right.push(entries[i]); wR += h; }
-    }
-
-    setColumns([left, right]);
-    setMeasuredKey(currentKey);
-  });
-
-  // Measurement pass — committed to DOM, measured, then immediately replaced.
-  if (needsMeasure) {
-    return (
-      <div ref={measureRef} className="supplier-profile-measure">
-        {entries.map((e) => <div key={e.key}>{e.node}</div>)}
-      </div>
-    );
-  }
-
-  const [left, right] = columns!;
-  return (
-    <div className="supplier-profile-sections">
-      <div className="profile-col">
-        {left.map((e) => <div key={e.key}>{e.node}</div>)}
-      </div>
-      <div className="profile-col">
-        {right.map((e) => <div key={e.key}>{e.node}</div>)}
-      </div>
-    </div>
-  );
 }
 
 interface Props {
@@ -146,5 +86,13 @@ export function SupplierProfileView({ isAlboB, sections }: Props) {
     ];
   }
 
-  return <BalancedColumns entries={entries} />;
+  return (
+    <div className="supplier-profile-sections">
+      {entries.map((entry) => (
+        <div key={entry.key} className="profile-section-grid-item">
+          {entry.node}
+        </div>
+      ))}
+    </div>
+  );
 }

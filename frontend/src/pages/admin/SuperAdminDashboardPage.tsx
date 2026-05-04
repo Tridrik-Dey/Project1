@@ -1,6 +1,7 @@
 import { Activity, BarChart3, Bell, Building2, ClipboardCheck, ClipboardList, Clock3, Download, LayoutDashboard, Mail, PieChart, Plus, Settings2, Users } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
+import { useI18n } from "../../i18n/I18nContext";
 import type { AdminReportKpis } from "../../api/adminReportApi";
 import type { AdminReviewCaseSummary } from "../../api/adminReviewApi";
 import type { AdminRole } from "../../api/adminUsersRolesApi";
@@ -122,6 +123,7 @@ export function SuperAdminDashboardPage({
   canExportReports,
   canAccessQueue
 }: SuperAdminDashboardPageProps) {
+  const { t } = useI18n();
   const recent = recentActivity.slice(0, 8);
   const pendingRevision = queue.filter((item) => item.status === "PENDING_ASSIGNMENT" || item.status === "IN_PROGRESS").slice(0, 6);
   const overdueCount = queue.filter((item) => item.status !== "DECIDED").length;
@@ -168,7 +170,7 @@ export function SuperAdminDashboardPage({
   const alertItems = [
     {
       id: "queue",
-      label: "Candidature da controllare",
+      label: t("admin.dashboard.candidature.title"),
       value: pendingRevision.length,
       threshold: 0,
       route: "/admin/candidature"
@@ -401,7 +403,7 @@ export function SuperAdminDashboardPage({
               <div className="superadmin-panel-head">
                 <div>
                   <p className="superadmin-card-kicker">CANDIDATURE</p>
-                  <h3 className="superadmin-card-title"><ClipboardList className="h-4 w-4" /> Candidature da controllare</h3>
+                  <h3 className="superadmin-card-title"><ClipboardList className="h-4 w-4" /> {t("admin.dashboard.candidature.title")}</h3>
                 </div>
                 {canAccessQueue ? <Link className="home-btn home-btn-secondary admin-action-btn" to="/admin/candidature">Vedi tutte</Link> : null}
               </div>
@@ -416,7 +418,7 @@ export function SuperAdminDashboardPage({
               {canAccessQueue && pendingRevision.map((item) => (
                 <div key={item.id} className="superadmin-row">
                   <div>
-                    <strong>{applicationShortCode(item.applicationId)}</strong>
+                    <strong>{item.protocolCode ?? applicationShortCode(item.applicationId)}</strong>
                     <p className="subtle">{formatStatus(item.status)}</p>
                   </div>
                   <span className={`superadmin-status-chip tone-${statusTone(item.status)}`}>{formatStatus(item.status)}</span>

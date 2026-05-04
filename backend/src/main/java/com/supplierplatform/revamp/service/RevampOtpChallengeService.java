@@ -17,11 +17,13 @@ import com.supplierplatform.revamp.repository.RevampApplicationRepository;
 import com.supplierplatform.revamp.repository.RevampApplicationSectionRepository;
 import com.supplierplatform.revamp.repository.RevampOtpChallengeRepository;
 import com.supplierplatform.user.User;
+import com.supplierplatform.user.UserRepository;
 import jakarta.mail.internet.MimeMessage;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mail.javamail.MimeMessageHelper;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -33,6 +35,7 @@ import java.time.ZoneOffset;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 
@@ -45,9 +48,17 @@ public class RevampOtpChallengeService {
     private final RevampApplicationSectionRepository applicationSectionRepository;
     private final JavaMailSender javaMailSender;
     private final ObjectMapper objectMapper;
+    private final UserRepository userRepository;
+    private final PasswordEncoder passwordEncoder;
 
     @Value("${app.reviews.status-mail.from:no-reply@supplierplatform.local}")
     private String fromEmail;
+
+    @Value("${spring.mail.username:}")
+    private String mailUsername;
+
+    @Value("${spring.mail.password:}")
+    private String mailPassword;
 
     @Transactional
     public OtpChallengeDispatchDto dispatchDeclarationSignatureOtp(UUID applicationId, User user) {
@@ -82,11 +93,16 @@ public class RevampOtpChallengeService {
 
         String deliveryMode = "SENT";
         String debugCode = null;
-        try {
-            sendOtpEmail(user.getEmail(), code, saved.getExpiresAt());
-        } catch (Exception ex) {
+        if (simulateOtpDelivery()) {
             deliveryMode = "SIMULATED";
             debugCode = code;
+        } else {
+            try {
+                sendOtpEmail(user.getEmail(), code, saved.getExpiresAt());
+            } catch (Exception ex) {
+                deliveryMode = "SIMULATED";
+                debugCode = code;
+            }
         }
 
         return new OtpChallengeDispatchDto(
@@ -126,11 +142,16 @@ public class RevampOtpChallengeService {
 
         String deliveryMode = "SENT";
         String debugCode = null;
-        try {
-            sendEmailVerificationOtpEmail(user.getEmail(), code, saved.getExpiresAt());
-        } catch (Exception ex) {
+        if (simulateOtpDelivery()) {
             deliveryMode = "SIMULATED";
             debugCode = code;
+        } else {
+            try {
+                sendEmailVerificationOtpEmail(user.getEmail(), code, saved.getExpiresAt());
+            } catch (Exception ex) {
+                deliveryMode = "SIMULATED";
+                debugCode = code;
+            }
         }
 
         return new OtpChallengeDispatchDto(
@@ -204,7 +225,125 @@ public class RevampOtpChallengeService {
         if (challenge.getChallengeType() != OtpChallengeType.EMAIL_VERIFY) {
             throw new IllegalArgumentException("OTP challenge type mismatch");
         }
-        return verifyChallenge(challengeId, otpCode, user);
+        OtpChallengeVerifyDto result = verifyChallenge(challengeId, otpCode, user);
+        // Persist email verification so the supplier is not asked again on future logins
+        userRepository.findById(user.getId()).ifPresent(u -> {
+            u.setEmailVerified(true);
+            userRepository.save(u);
+        });
+        return result;
+    }
+
+    @Transactional
+    public OtpChallengeDispatchDto dispatchPasswordResetOtp(String email) {
+        Optional<User> userOpt = userRepository.findByEmailIgnoreCase(email.trim());
+        if (userOpt.isEmpty()) {
+            // Return a plausible fake response to prevent user enumeration
+            return new OtpChallengeDispatchDto(UUID.randomUUID(), LocalDateTime.now().plusMinutes(15),
+                    OtpChallengeStatus.PENDING.name(), "SIMULATED", maskEmail(email), null);
+        }
+        User user = userOpt.get();
+
+        List<RevampOtpChallenge> pending = otpChallengeRepository.findByUserIdAndChallengeTypeAndStatusOrderByCreatedAtDesc(
+                user.getId(), OtpChallengeType.PASSWORD_RESET, OtpChallengeStatus.PENDING);
+        for (RevampOtpChallenge c : pending) {
+            c.setStatus(OtpChallengeStatus.EXPIRED);
+            otpChallengeRepository.save(c);
+        }
+
+        String code = String.format("%06d", ThreadLocalRandom.current().nextInt(0, 1_000_000));
+        RevampOtpChallenge challenge = new RevampOtpChallenge();
+        challenge.setUser(user);
+        challenge.setChallengeType(OtpChallengeType.PASSWORD_RESET);
+        challenge.setTargetEmail(user.getEmail());
+        challenge.setOtpHash(hash(code));
+        challenge.setAttempts(0);
+        challenge.setMaxAttempts(5);
+        challenge.setExpiresAt(LocalDateTime.now().plusMinutes(15));
+        challenge.setStatus(OtpChallengeStatus.PENDING);
+        RevampOtpChallenge saved = otpChallengeRepository.save(challenge);
+
+        String deliveryMode = "SENT";
+        String debugCode = null;
+        if (simulateOtpDelivery()) {
+            deliveryMode = "SIMULATED";
+            debugCode = code;
+        } else {
+            try {
+                sendPasswordResetOtpEmail(user.getEmail(), code, saved.getExpiresAt());
+            } catch (Exception ex) {
+                deliveryMode = "SIMULATED";
+                debugCode = code;
+            }
+        }
+
+        return new OtpChallengeDispatchDto(saved.getId(), saved.getExpiresAt(),
+                saved.getStatus().name(), deliveryMode, maskEmail(user.getEmail()), debugCode);
+    }
+
+    @Transactional
+    public void verifyPasswordResetChallenge(UUID challengeId, String otpCode, String newPassword) {
+        RevampOtpChallenge challenge = otpChallengeRepository.findById(challengeId)
+                .orElseThrow(() -> new EntityNotFoundException("RevampOtpChallenge", challengeId));
+
+        if (challenge.getChallengeType() != OtpChallengeType.PASSWORD_RESET) {
+            throw new IllegalArgumentException("OTP challenge type mismatch");
+        }
+        if (challenge.getStatus() != OtpChallengeStatus.PENDING) {
+            throw new IllegalStateException("OTP challenge is not pending");
+        }
+        if (LocalDateTime.now().isAfter(challenge.getExpiresAt())) {
+            challenge.setStatus(OtpChallengeStatus.EXPIRED);
+            otpChallengeRepository.save(challenge);
+            throw new IllegalStateException("OTP challenge expired");
+        }
+
+        int attempts = challenge.getAttempts() == null ? 0 : challenge.getAttempts();
+        int maxAttempts = challenge.getMaxAttempts() == null ? 5 : challenge.getMaxAttempts();
+        if (attempts >= maxAttempts) {
+            challenge.setStatus(OtpChallengeStatus.LOCKED);
+            otpChallengeRepository.save(challenge);
+            throw new IllegalStateException("OTP challenge locked");
+        }
+
+        String normalized = otpCode == null ? "" : otpCode.trim();
+        if (!hash(normalized).equals(challenge.getOtpHash())) {
+            challenge.setAttempts(attempts + 1);
+            if (attempts + 1 >= maxAttempts) {
+                challenge.setStatus(OtpChallengeStatus.LOCKED);
+            }
+            otpChallengeRepository.save(challenge);
+            throw new IllegalArgumentException("Invalid OTP code");
+        }
+
+        challenge.setStatus(OtpChallengeStatus.VERIFIED);
+        challenge.setVerifiedAt(LocalDateTime.now());
+        otpChallengeRepository.save(challenge);
+
+        User user = challenge.getUser();
+        user.setPasswordHash(passwordEncoder.encode(newPassword));
+        userRepository.save(user);
+    }
+
+    private void sendPasswordResetOtpEmail(String to, String code, LocalDateTime expiresAt) throws Exception {
+        MimeMessage message = javaMailSender.createMimeMessage();
+        MimeMessageHelper helper = new MimeMessageHelper(message, true, StandardCharsets.UTF_8.name());
+        helper.setFrom(fromEmail);
+        helper.setTo(to);
+        helper.setSubject("Codice OTP reimpostazione password");
+        String body = """
+                Il tuo codice OTP per reimpostare la password e: %s
+
+                Il codice scade alle %s.
+                Se non hai richiesto il reset della password, ignora questa email.
+                """.formatted(code, expiresAt);
+        helper.setText(body, false);
+        javaMailSender.send(message);
+    }
+
+    private boolean simulateOtpDelivery() {
+        return mailUsername == null || mailUsername.isBlank()
+                || mailPassword == null || mailPassword.isBlank();
     }
 
     private void sendOtpEmail(String to, String code, LocalDateTime expiresAt) throws Exception {

@@ -1,4 +1,4 @@
-﻿import { House, LogOut, ShieldCheck, UserRound } from "lucide-react";
+import { ChevronDown, House, LogOut, ShieldCheck, UserRound } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../../auth/AuthContext";
@@ -6,6 +6,20 @@ import { useAdminGovernanceRole } from "../../hooks/useAdminGovernanceRole";
 import { useI18n } from "../../i18n/I18nContext";
 
 const BARE_PATHS = ["/", "/login", "/register", "/verify-otp", "/activate-account", "/accept-admin-invite", "/privacy"];
+
+function loadSupplierIdentityPreview(): { name: string; initials: string } | null {
+  try {
+    const raw = sessionStorage.getItem("supplier_identity_preview");
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { name?: unknown; initials?: unknown };
+    if (typeof parsed.name === "string" && typeof parsed.initials === "string" && parsed.name && parsed.initials) {
+      return { name: parsed.name, initials: parsed.initials };
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
 
 function formatAdminGovernanceRole(role: string | null): string | null {
   if (!role) return null;
@@ -24,6 +38,8 @@ export function AppLayout({ children }: { children: ReactNode }) {
   const location = useLocation();
   const [isHeaderScrolled, setIsHeaderScrolled] = useState(false);
   const [topbarRipple, setTopbarRipple] = useState<{ id: number; x: number; y: number } | null>(null);
+  const [supplierIdentityPreview, setSupplierIdentityPreview] = useState<{ name: string; initials: string } | null>(() => loadSupplierIdentityPreview());
+  const [formUserMenuOpen, setFormUserMenuOpen] = useState(false);
   const appVersion = import.meta.env.VITE_APP_VERSION ?? "v1.0.0";
   const currentYear = new Date().getFullYear();
   const roleLabel = auth?.role === "ADMIN"
@@ -32,9 +48,14 @@ export function AppLayout({ children }: { children: ReactNode }) {
       ? t("nav.supplier")
       : auth?.role ?? "";
   const roleClass = auth?.role === "ADMIN" ? "is-admin" : auth?.role === "SUPPLIER" ? "is-supplier" : "";
-  const initials = auth?.fullName
+  const initials = supplierIdentityPreview?.initials || (auth?.fullName
     ? auth.fullName.split(" ").map((p) => p[0]).join("").slice(0, 2).toUpperCase()
-    : "";
+    : "");
+  const userDisplayName = supplierIdentityPreview?.name || auth?.fullName || "";
+  const isSupplierFormPage = auth?.role === "SUPPLIER" && (
+    (location.pathname.startsWith("/apply/") && !location.pathname.endsWith("/my-profile")) ||
+    (location.pathname.startsWith("/application/") && !location.pathname.endsWith("/submitted"))
+  );
   const navItems = [
     { to: "/", end: true, label: t("nav.home"), icon: House },
     { to: "/supplier/dashboard", end: false, label: t("nav.supplier"), icon: UserRound },
@@ -46,6 +67,15 @@ export function AppLayout({ children }: { children: ReactNode }) {
     onScroll();
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+
+  useEffect(() => {
+    const onIdentityPreview = (event: Event) => {
+      const detail = (event as CustomEvent<{ name: string; initials: string } | null>).detail;
+      setSupplierIdentityPreview(detail?.name && detail?.initials ? detail : null);
+    };
+    window.addEventListener("supplier:identity-preview", onIdentityPreview);
+    return () => window.removeEventListener("supplier:identity-preview", onIdentityPreview);
   }, []);
 
   const handleTopbarMouseEnter = (event: React.MouseEvent<HTMLElement>) => {
@@ -72,11 +102,56 @@ export function AppLayout({ children }: { children: ReactNode }) {
     location.pathname.startsWith("/admin") ||
     location.pathname.endsWith("/my-profile") ||
     location.pathname === "/login" ||
-    location.pathname === "/register"
+    location.pathname === "/register" ||
+    location.pathname === "/forgot-password" ||
+    location.pathname === "/forgot-password/verify"
   ) {
     return <>{children}</>;
   }
 
+  if (isSupplierFormPage) {
+    return (
+      <div className="app-shell supplier-form-shell">
+        <header className="supplier-dashboard-header">
+          <Link to="/" className="supplier-dashboard-brand">
+            <div className="supplier-dashboard-logo-mark"><div /></div>
+            <div className="supplier-dashboard-brand-text">
+              <span className="supplier-dashboard-brand-name">Solco<sup>+</sup></span>
+              <span className="supplier-dashboard-brand-subtitle">Albo Fornitori Digitale</span>
+            </div>
+          </Link>
+
+          <div className="supplier-dashboard-user">
+            <button
+              type="button"
+              className={`supplier-dashboard-user-button${formUserMenuOpen ? " is-open" : ""}`}
+              onClick={() => setFormUserMenuOpen((open) => !open)}
+            >
+              <span className="supplier-dashboard-user-avatar">{initials}</span>
+              <span className="supplier-dashboard-user-name">{userDisplayName}</span>
+              <ChevronDown size={14} className={formUserMenuOpen ? "is-open" : ""} />
+            </button>
+            {formUserMenuOpen ? (
+              <>
+                <div className="supplier-dashboard-user-backdrop" onClick={() => setFormUserMenuOpen(false)} />
+                <div className="supplier-dashboard-user-menu">
+                  <div className="supplier-dashboard-user-menu-head">
+                    <strong>{userDisplayName}</strong>
+                    {auth?.email ? <span>{auth.email}</span> : null}
+                  </div>
+                  <button type="button" onClick={logout}>
+                    <LogOut className="h-4 w-4" />
+                    <span>{t("auth.logout")}</span>
+                  </button>
+                </div>
+              </>
+            ) : null}
+          </div>
+        </header>
+        <main className="content supplier-form-content">{children}</main>
+      </div>
+    );
+  }
   const isBarePage = BARE_PATHS.includes(location.pathname) || location.pathname.startsWith("/invite/");
 
   if (isBarePage) {
@@ -130,7 +205,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
             <>
               <span className={`user-chip ${roleClass}`}>
                 <span className="user-avatar" aria-hidden="true">{initials}</span>
-                <span className="user-name">{auth.fullName}</span>
+                <span className="user-name">{userDisplayName}</span>
                 <span className={`role-pill ${roleClass}`}>{roleLabel}</span>
               </span>
               <button type="button" className="logout-btn" onClick={logout}>

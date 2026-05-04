@@ -7,6 +7,7 @@ import com.supplierplatform.common.EntityNotFoundException;
 import com.supplierplatform.revamp.dto.RevampApplicationSummaryDto;
 import com.supplierplatform.revamp.dto.RevampAuditEventInputDto;
 import com.supplierplatform.revamp.dto.RevampApplicationCommunicationDto;
+import com.supplierplatform.revamp.dto.RevampIntegrationRequestSummaryDto;
 import com.supplierplatform.revamp.dto.RevampSectionSnapshotDto;
 import com.supplierplatform.revamp.enums.ApplicationStatus;
 import com.supplierplatform.revamp.enums.IntegrationRequestStatus;
@@ -195,6 +196,29 @@ public class RevampApplicationService {
                 .toList();
     }
 
+    @Transactional(readOnly = true)
+    public RevampIntegrationRequestSummaryDto getOpenIntegrationRequest(UUID applicationId, UUID currentUserId) {
+        RevampApplication application = getApplication(applicationId);
+        if (application.getApplicantUser() == null || !application.getApplicantUser().getId().equals(currentUserId)) {
+            throw new AccessDeniedException("Not authorized to read integration requests for this application");
+        }
+
+        RevampIntegrationRequest request = integrationRequestRepository
+                .findFirstByReviewCaseApplicationIdAndStatusOrderByCreatedAtDesc(applicationId, IntegrationRequestStatus.OPEN);
+        if (request == null) {
+            return null;
+        }
+        return new RevampIntegrationRequestSummaryDto(
+                request.getId(),
+                request.getReviewCase() != null ? request.getReviewCase().getId() : null,
+                request.getStatus() != null ? request.getStatus().name() : null,
+                request.getDueAt(),
+                request.getRequestMessage(),
+                request.getRequestedItemsJson(),
+                request.getUpdatedAt()
+        );
+    }
+
     @Transactional
     public RevampApplicationSummaryDto submit(UUID applicationId) {
         RevampApplication application = getApplication(applicationId);
@@ -235,6 +259,20 @@ public class RevampApplicationService {
                 "{\"status\":\"" + saved.getStatus().name() + "\"}",
                 "{\"protocolCode\":\"" + saved.getProtocolCode() + "\",\"applicantName\":\"" + esc(saved.getApplicantUser() != null ? saved.getApplicantUser().getFullName() : "") + "\"}"
         ));
+        if (beforeStatus == ApplicationStatus.INTEGRATION_REQUIRED) {
+            auditService.append(new RevampAuditEventInputDto(
+                    "revamp.application.integration.answered",
+                    "REVAMP_APPLICATION",
+                    saved.getId(),
+                    saved.getApplicantUser() != null ? saved.getApplicantUser().getId() : null,
+                    actorRole,
+                    null,
+                    null,
+                    "{\"status\":\"" + beforeStatus.name() + "\"}",
+                    "{\"status\":\"" + saved.getStatus().name() + "\"}",
+                    "{\"protocolCode\":\"" + saved.getProtocolCode() + "\",\"applicantName\":\"" + esc(saved.getApplicantUser() != null ? saved.getApplicantUser().getFullName() : "") + "\"}"
+            ));
+        }
         return applicationMapper.toSummary(saved);
     }
 

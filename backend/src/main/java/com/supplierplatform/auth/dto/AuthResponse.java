@@ -22,4 +22,5 @@ public class AuthResponse {
     private String fullName;
     private UserRole role;
     private String adminGovernanceRole;
+    private boolean emailVerified;
 }

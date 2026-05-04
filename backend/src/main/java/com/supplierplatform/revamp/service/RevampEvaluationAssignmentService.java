@@ -272,12 +272,11 @@ public class RevampEvaluationAssignmentService {
         }
         UUID assignedId = assignment.getAssignedEvaluatorUser() != null ? assignment.getAssignedEvaluatorUser().getId() : null;
         if (assignedId != null && assignedId.equals(actorUserId)) return;
-        AdminRole actorRole = governanceAuthorizationService.requireAnyRole(
+        governanceAuthorizationService.requireAnyRole(
                 actorUserId,
                 AdminRole.SUPER_ADMIN,
                 AdminRole.REVISORE
         );
-        if (actorRole == AdminRole.SUPER_ADMIN) return;
         throw new AccessDeniedException("Only the assigned evaluator can edit this evaluation draft");
     }
 

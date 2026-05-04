@@ -12,13 +12,13 @@ function asBool(v: unknown): boolean | null {
 
 export function AlboBSection5({ payload }: { payload: P | null }) {
   if (!payload) return (
-    <SectionCard icon={<ShieldCheck className="h-5 w-5" />} title="Sezione 5 — Dichiarazioni e Conformità" accent="orange">
+    <SectionCard icon={<ShieldCheck className="h-5 w-5" />} title="Sezione 5 — Dichiarazioni e Conformità" accent="orange" layout="wide">
       <p className="profile-empty">Nessun dato disponibile per questa sezione.</p>
     </SectionCard>
   );
 
   return (
-    <SectionCard icon={<ShieldCheck className="h-5 w-5" />} title="Sezione 5 — Dichiarazioni e Conformità" accent="orange">
+    <SectionCard icon={<ShieldCheck className="h-5 w-5" />} title="Sezione 5 — Dichiarazioni e Conformità" accent="orange" layout="wide">
       <BooleanChecklist items={[
         { label: "Dichiarazione antimafia", value: asBool(payload.antimafiaDeclaration) },
         { label: "Dichiarazione D.Lgs. 231/01", value: asBool(payload.dlgs231Declaration) },

@@ -24,7 +24,7 @@ export function VerifyOtpPage() {
   const [sending, setSending] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: "error" | "success" } | null>(null);
 
-  const alreadyVerified = useMemo(() => isRevampEmailVerified(), []);
+  const alreadyVerified = useMemo(() => Boolean(auth?.emailVerified) || isRevampEmailVerified(), [auth?.emailVerified]);
 
   useEffect(() => {
     if (!featureFlags.newWizardAb || !auth?.token || alreadyVerified) return;

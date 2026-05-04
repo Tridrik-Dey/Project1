@@ -7,6 +7,7 @@ import com.supplierplatform.revamp.api.dto.CreateApplicationDraftRequest;
 import com.supplierplatform.revamp.api.dto.SaveApplicationSectionRequest;
 import com.supplierplatform.revamp.dto.RevampApplicationSummaryDto;
 import com.supplierplatform.revamp.dto.RevampApplicationCommunicationDto;
+import com.supplierplatform.revamp.dto.RevampIntegrationRequestSummaryDto;
 import com.supplierplatform.revamp.dto.RevampSectionSnapshotDto;
 import com.supplierplatform.revamp.dto.RevampEvaluationAggregateDto;
 import com.supplierplatform.revamp.service.RevampApplicationAttachmentDownloadService;
@@ -87,6 +88,13 @@ public class RevampApplicationController {
         revampAccessGuard.requireReadEnabled();
         User currentUser = getCurrentUser();
         return ResponseEntity.ok(ApiResponse.ok(applicationService.getCommunications(applicationId, currentUser.getId())));
+    }
+
+    @GetMapping("/{applicationId}/integration-request/open")
+    public ResponseEntity<ApiResponse<RevampIntegrationRequestSummaryDto>> getOpenIntegrationRequest(@PathVariable UUID applicationId) {
+        revampAccessGuard.requireReadEnabled();
+        User currentUser = getCurrentUser();
+        return ResponseEntity.ok(ApiResponse.ok(applicationService.getOpenIntegrationRequest(applicationId, currentUser.getId())));
     }
 
     @PostMapping("/{applicationId}/attachments/upload")

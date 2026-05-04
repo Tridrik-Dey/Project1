@@ -1,6 +1,6 @@
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Navigate, useNavigate, useParams, Link } from "react-router-dom";
-import { ArrowLeft, ArrowRight, Info, Save } from "lucide-react";
+import { ArrowLeft, ArrowRight, CheckCircle, Info, Save } from "lucide-react";
 import { useAuth } from "../../auth/AuthContext";
 import { createRevampApplicationDraft, getMyLatestRevampApplication, getRevampApplicationSections, saveRevampApplicationSection, uploadRevampAttachment } from "../../api/revampApplicationApi";
 import type { AttachmentUploadResult } from "../../api/revampApplicationApi";
@@ -434,6 +434,24 @@ export function RevampRegistryStartPage() {
   const title      = isA ? "Albo A — Professionisti" : "Albo B — Aziende";
   const pivaReq    = PIVA_REQUIRED_REGIMES.has(form.taxRegime);
   const showOtherRegime = form.taxRegime === "altro";
+  const liveDisplayName = [form.firstName, form.lastName]
+    .map(part => part.trim())
+    .filter(Boolean)
+    .join(" ");
+  const identityName = liveDisplayName || auth?.email || "Utente";
+  const identityInitials =
+    `${form.firstName.trim().charAt(0)}${form.lastName.trim().charAt(0)}`.toUpperCase()
+    || identityName.slice(0, 2).toUpperCase();
+
+  useEffect(() => {
+    sessionStorage.setItem("supplier_identity_preview", JSON.stringify({
+      name: identityName,
+      initials: identityInitials
+    }));
+    window.dispatchEvent(new CustomEvent("supplier:identity-preview", {
+      detail: { name: identityName, initials: identityInitials }
+    }));
+  }, [identityInitials, identityName]);
 
   function set(field: keyof typeof form): OnChange {
     return (e) => {
@@ -603,8 +621,8 @@ export function RevampRegistryStartPage() {
           <div style={{ fontSize: "0.75rem", color: MUTED }}>Questionario di iscrizione</div>
         </div>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
-          <button type="button" onClick={() => void handleSaveDraft()} style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 16px", background: "#fff", border: "1.5px solid #d1d5db", borderRadius: 6, fontWeight: 600, fontSize: "0.82rem", cursor: "pointer", color: "#374151" }}>
-            <Save size={14} />
+          <button type="button" className={`wizard-save-button${savedAt ? " is-saved" : ""}`} onClick={() => void handleSaveDraft()} style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 16px", background: "#fff", border: "1.5px solid #d1d5db", borderRadius: 6, fontWeight: 600, fontSize: "0.82rem", cursor: "pointer", color: "#374151" }}>
+            {savedAt ? <CheckCircle size={14} /> : <Save size={14} />}
             {savedAt ? `Bozza salvata ${savedAt}` : "Salva bozza"}
           </button>
           {saveError ? <span style={{ fontSize: "0.72rem", color: "#dc2626" }}>{saveError}</span> : null}
@@ -646,11 +664,6 @@ export function RevampRegistryStartPage() {
                   Compila i tuoi dati personali e di contatto. I campi con <span style={{ color: ERR }}>*</span> sono obbligatori.
                 </p>
               </div>
-              {savedAt ? (
-                <span style={{ display: "flex", alignItems: "center", gap: 5, fontSize: "0.75rem", color: "#16a34a", background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 4, padding: "3px 10px", whiteSpace: "nowrap" }}>
-                  ✓ Bozza salvata {savedAt}
-                </span>
-              ) : null}
             </div>
             <div style={{ height: 1, background: "#f3f4f6", margin: "16px 0 4px" }} />
 
@@ -820,8 +833,8 @@ export function RevampRegistryStartPage() {
         </div>
 
         {/* ── Bottom navigation ── */}
-        <div style={{ background: "#fff", borderTop: "1px solid #e5e7eb", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 40px", position: "sticky", bottom: 0 }}>
-          <Link
+        <div className="wizard-bottom-nav" style={{ background: "#fff", borderTop: "1px solid #e5e7eb", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 40px", position: "sticky", bottom: 0 }}>
+          <Link className="wizard-nav-button wizard-nav-button-prev"
             to="/apply"
             style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 20px", background: "#fff", border: `1.5px solid ${accent}`, borderRadius: 6, fontWeight: 600, fontSize: "0.85rem", color: accent, textDecoration: "none" }}
           >
@@ -835,7 +848,7 @@ export function RevampRegistryStartPage() {
             </div>
           </div>
 
-          <button
+          <button className="wizard-nav-button wizard-nav-button-next"
             type="submit"
             style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 20px", background: accent, color: "#fff", border: "none", borderRadius: 6, fontWeight: 600, fontSize: "0.85rem", cursor: "pointer" }}
           >

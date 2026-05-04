@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, ArrowLeft, CheckCircle2, ClipboardList, Clock3, FileText, History, Info, MessageSquare, RefreshCw, Save, XCircle } from "lucide-react";
+import { AlertTriangle, ArrowLeft, CheckCircle2, ClipboardList, Clock3, ExternalLink, FileText, History, Info, MessageSquare, RefreshCw, Save, XCircle } from "lucide-react";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import { getAdminAuditEvents, type AdminAuditEventRow } from "../../api/adminAuditApi";
 import type { DashboardActivityEvent } from "../../api/adminDashboardEventsApi";
 import { type AdminRole } from "../../api/adminUsersRolesApi";
 import { API_BASE_URL, HttpError } from "../../api/http";
@@ -24,9 +25,19 @@ type DecisionAction = "APPROVED" | "REJECTED";
 type VerificationOutcome = "COMPLIANT" | "COMPLIANT_WITH_RESERVATIONS" | "INCOMPLETE" | "NON_COMPLIANT";
 type SectionPayload = Record<string, unknown>;
 type DocumentRow = { id: string; label: string; sectionLabel: string; url: string | null; hasLink: boolean };
+type ReviewTimelineEvent = {
+  id: string;
+  title: string;
+  badge: string;
+  tone: "ok" | "warn" | "danger" | "neutral";
+  detail?: string;
+  occurredAt: string;
+  decision?: "approve" | "reject";
+};
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DECISION_REASON_MAX = 500;
+const HISTORY_SNAKE_ROW_SIZE = 3;
 
 function daysSince(iso: string | null): number | null {
   if (!iso) return null;
@@ -101,6 +112,12 @@ function findDocumentUrl(value: unknown, applicationId: string): string | null {
   return `/api/v2/applications/${encodeURIComponent(applicationId)}/attachments/download?storageKey=${encodeURIComponent(storageKey)}`;
 }
 
+function isUploadedAttachment(value: Record<string, unknown> | null | undefined): value is Record<string, unknown> {
+  const fileName = toScalar(value?.fileName);
+  const storageKey = toScalar(value?.storageKey);
+  return Boolean(fileName && storageKey && storageKey !== "upload-pending");
+}
+
 function canFinalizeDecision(role: AdminRole | null): boolean {
   return role === "SUPER_ADMIN" || role === "RESPONSABILE_ALBO";
 }
@@ -139,6 +156,97 @@ function historyStatusTone(status: string): "ok" | "warn" | "neutral" {
   return "neutral";
 }
 
+function parseAuditRecord(raw: string | null | undefined): Record<string, string> {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return Object.fromEntries(
+      Object.entries(parsed as Record<string, unknown>)
+        .filter(([, value]) => value !== null && value !== undefined)
+        .map(([key, value]) => [key, String(value)])
+    );
+  } catch {
+    return {};
+  }
+}
+
+function verificationOutcomeLabel(outcome: string | null | undefined): string {
+  if (outcome === "COMPLIANT") return "Conforme";
+  if (outcome === "COMPLIANT_WITH_RESERVATIONS") return "Conforme con riserve";
+  if (outcome === "INCOMPLETE") return "Incompleta";
+  if (outcome === "NON_COMPLIANT") return "Non conforme";
+  return "Verificata";
+}
+
+function mapAuditToTimelineEvent(event: AdminAuditEventRow): ReviewTimelineEvent | null {
+  const key = event.eventKey ?? "";
+  const meta = parseAuditRecord(event.metadataJson);
+  const before = parseAuditRecord(event.beforeStateJson);
+  const actor = meta.actorName || meta.applicantName || meta.adminName || "";
+
+  if (key === "revamp.application.submitted") {
+    const wasIntegration = before.status === "INTEGRATION_REQUIRED";
+    return {
+      id: event.id,
+      title: wasIntegration ? "Risposta fornitore ricevuta" : "Candidatura inviata",
+      badge: wasIntegration ? "Integrazione ricevuta" : "Invio",
+      tone: "neutral",
+      detail: wasIntegration
+        ? "Il fornitore ha inviato le informazioni richieste."
+        : (meta.protocolCode ? `Protocollo ${meta.protocolCode}` : undefined),
+      occurredAt: event.occurredAt
+    };
+  }
+
+  if (key === "revamp.review.opened") {
+    return {
+      id: event.id,
+      title: "Presa in carico",
+      badge: "In revisione",
+      tone: "neutral",
+      detail: actor ? `Da ${actor}` : undefined,
+      occurredAt: event.occurredAt
+    };
+  }
+
+  if (key === "revamp.review.verified") {
+    return {
+      id: event.id,
+      title: "Verifica completata",
+      badge: verificationOutcomeLabel(meta.verificationOutcome),
+      tone: meta.verificationOutcome === "COMPLIANT" ? "ok" : "warn",
+      detail: event.reason || undefined,
+      occurredAt: event.occurredAt
+    };
+  }
+
+  if (key === "revamp.review.integration_requested") {
+    return {
+      id: event.id,
+      title: "Integrazione richiesta",
+      badge: "Richiesta",
+      tone: "warn",
+      detail: event.reason || undefined,
+      occurredAt: event.occurredAt
+    };
+  }
+
+  if (key === "revamp.review.decided") {
+    const approved = meta.decision === "APPROVED";
+    return {
+      id: event.id,
+      title: "Decisione registrata",
+      badge: approved ? "Approvata" : "Non approvata",
+      tone: approved ? "ok" : "danger",
+      detail: event.reason || undefined,
+      occurredAt: event.occurredAt
+    };
+  }
+
+  return null;
+}
+
 function makeInitials(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);
   if (parts.length === 0) return "??";
@@ -164,6 +272,7 @@ export function AdminApplicationCasePage() {
   const [summary, setSummary] = useState<RevampApplicationSummary | null>(null);
   const [sections, setSections] = useState<RevampSectionSnapshot[]>([]);
   const [reviewHistory, setReviewHistory] = useState<AdminReviewCaseSummary[]>([]);
+  const [auditEvents, setAuditEvents] = useState<AdminAuditEventRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [busyAction, setBusyAction] = useState<DecisionAction | null>(null);
   const [latestIntegrationRequest, setLatestIntegrationRequest] = useState<AdminIntegrationRequestSummary | null>(null);
@@ -207,9 +316,10 @@ export function AdminApplicationCasePage() {
       const summaryData = await getRevampApplicationSummary(appId, token);
       setSummary(summaryData);
 
-      const [sectionsResult, historyResult] = await Promise.allSettled([
+      const [sectionsResult, historyResult, auditResult] = await Promise.allSettled([
         getRevampApplicationSections(appId, token),
-        getAdminReviewHistory(appId, token)
+        getAdminReviewHistory(appId, token),
+        getAdminAuditEvents(token, { entityType: "REVAMP_APPLICATION", entityId: appId })
       ]);
 
       if (sectionsResult.status === "fulfilled") {
@@ -236,12 +346,19 @@ export function AdminApplicationCasePage() {
         setReviewHistory([]);
         setLatestIntegrationRequest(null);
       }
+
+      if (auditResult.status === "fulfilled") {
+        setAuditEvents(auditResult.value);
+      } else {
+        setAuditEvents([]);
+      }
     } catch (error) {
       const message = error instanceof HttpError ? error.message : "Caricamento pratica non riuscito.";
       setToast({ message, type: "error" });
       setSummary(null);
       setSections([]);
       setReviewHistory([]);
+      setAuditEvents([]);
       setLatestIntegrationRequest(null);
     } finally {
       caseRefreshInFlightRef.current = false;
@@ -265,12 +382,52 @@ export function AdminApplicationCasePage() {
   });
 
   const latestCase = useMemo(() => reviewHistory[0] ?? null, [reviewHistory]);
+  const timelineEvents = useMemo<ReviewTimelineEvent[]>(() => {
+    const events = auditEvents
+      .map(mapAuditToTimelineEvent)
+      .filter((event): event is ReviewTimelineEvent => Boolean(event))
+      .sort((a, b) => Date.parse(a.occurredAt) - Date.parse(b.occurredAt));
+
+    if (events.length > 0) return events;
+
+    const fallback: ReviewTimelineEvent[] = [];
+    if (summary?.submittedAt) {
+      fallback.push({
+        id: "application-submitted",
+        title: "Candidatura inviata",
+        badge: "Invio",
+        tone: "neutral",
+        detail: summary.protocolCode ? `Protocollo ${summary.protocolCode}` : undefined,
+        occurredAt: summary.submittedAt
+      });
+    }
+    reviewHistory
+      .slice()
+      .sort((a, b) => Date.parse(a.updatedAt) - Date.parse(b.updatedAt))
+      .forEach((item) => {
+        fallback.push({
+          id: item.id,
+          title: historyStatusLabel(item.status),
+          badge: item.decision === "APPROVED" ? "Approvata" : item.decision === "REJECTED" ? "Non approvata" : historyStatusLabel(item.status),
+          tone: item.decision === "REJECTED" ? "danger" : historyStatusTone(item.status),
+          detail: item.slaDueAt ? `Scadenza: ${new Date(item.slaDueAt).toLocaleDateString("it-IT")}` : undefined,
+          occurredAt: item.updatedAt
+        });
+      });
+    return fallback;
+  }, [auditEvents, reviewHistory, summary?.protocolCode, summary?.submittedAt]);
+  const historyRows = useMemo(() => {
+    const rows: ReviewTimelineEvent[][] = [];
+    for (let index = 0; index < timelineEvents.length; index += HISTORY_SNAKE_ROW_SIZE) {
+      rows.push(timelineEvents.slice(index, index + HISTORY_SNAKE_ROW_SIZE));
+    }
+    return rows;
+  }, [timelineEvents]);
   const submittedDays = useMemo(() => daysSince(summary?.submittedAt ?? null), [summary?.submittedAt]);
   const isUrgent = (submittedDays ?? 0) >= 5 && summary?.status !== "APPROVED";
   const completedSections = useMemo(() => sections.filter((section) => section.completed), [sections]);
   const s1Payload = useMemo(() => getSectionPayload(sections, "S1"), [sections]);
   const s2Payload = useMemo(() => getSectionPayload(sections, "S2"), [sections]);
-  const s3Payload = useMemo(() => getSectionPayload(sections, "S3A", "S3B", "S3"), [sections]);
   const s4Payload = useMemo(() => getSectionPayload(sections, "S4"), [sections]);
   const canFinalize = canFinalizeDecision(adminRole);
   const canRequestIntegration = canRequestIntegrationDecision(adminRole);
@@ -283,7 +440,7 @@ export function AdminApplicationCasePage() {
   const notYetAssigned = latestCase?.status === "PENDING_ASSIGNMENT";
   const finalDecisionLocked = isFinalized || awaitingSupplierResponse || notYetVerified || notYetAssigned;
   const assignedToOther = Boolean(latestCase?.assignedToUserId && auth?.userId && latestCase.assignedToUserId !== auth.userId);
-  const assignmentLocked = assignedToOther && (adminRole === "REVISORE" || adminRole === "SUPER_ADMIN");
+  const assignmentLocked = assignedToOther && adminRole !== "SUPER_ADMIN";
   const isAlboB = summary?.registryType === "ALBO_B";
 
   const candidateHeaderTitle = useMemo(() => {
@@ -321,11 +478,11 @@ export function AdminApplicationCasePage() {
   const documentRows = useMemo<DocumentRow[]>(() => {
     const rows: DocumentRow[] = [];
     const s1Photo = (s1Payload?.profilePhotoAttachment as Record<string, unknown> | undefined) ?? null;
-    const s1PhotoUrl = findDocumentUrl(s1Photo?.storageKey ?? s1Payload?.profilePhotoDataUrl, appId);
-    if (s1Payload && (s1Photo || "profilePhotoDataUrl" in s1Payload || "profilePhotoName" in s1Payload)) {
+    const s1PhotoUrl = findDocumentUrl(s1Photo?.storageKey, appId);
+    if (isUploadedAttachment(s1Photo)) {
       rows.push({
         id: "profile-photo",
-        label: toScalar(s1Photo?.fileName ?? s1Payload.profilePhotoName) || "Foto profilo",
+        label: toScalar(s1Photo.fileName) || "Foto profilo",
         sectionLabel: "Anagrafica",
         url: s1PhotoUrl,
         hasLink: Boolean(s1PhotoUrl)
@@ -336,6 +493,7 @@ export function AdminApplicationCasePage() {
       ? (s4Payload.attachments as Array<Record<string, unknown>>)
       : [];
     s4Attachments.forEach((attachment, index) => {
+      if (!isUploadedAttachment(attachment)) return;
       const labelParts = [toScalar(attachment.documentType), toScalar(attachment.fileName)].filter(Boolean);
       const expired = Boolean(attachment.expired);
       const expiringSoon = Boolean(attachment.expiringSoon);
@@ -349,27 +507,8 @@ export function AdminApplicationCasePage() {
         hasLink: Boolean(url)
       });
     });
-
-    const payloadCandidates = [
-      { key: "S3", payload: s3Payload },
-      { key: "S4", payload: s4Payload }
-    ];
-    payloadCandidates.forEach((entry) => {
-      if (!entry.payload) return;
-      Object.entries(entry.payload).forEach(([field, raw]) => {
-        const url = findDocumentUrl(raw, appId);
-        if (!url) return;
-        rows.push({
-          id: `${entry.key}-${field}`,
-          label: field,
-          sectionLabel: sectionLabel(entry.key),
-          url,
-          hasLink: true
-        });
-      });
-    });
     return rows;
-  }, [appId, s1Payload, s3Payload, s4Payload]);
+  }, [appId, s1Payload, s4Payload]);
 
   const checklistRows = useMemo(
     () => [
@@ -462,8 +601,10 @@ export function AdminApplicationCasePage() {
       window.open(url, "_blank", "noopener,noreferrer");
       return;
     }
-    const targetWindow = window.open("about:blank", "_blank", "noopener,noreferrer");
-    if (targetWindow) targetWindow.document.body.innerHTML = "<p style=\"font-family:sans-serif;padding:24px\">Apertura documento in corso…</p>";
+    const targetWindow = window.open("", "_blank");
+    if (targetWindow) {
+      targetWindow.document.body.innerHTML = "<p style=\"font-family:sans-serif;padding:24px\">Apertura documento in corso...</p>";
+    }
     try {
       const response = await fetch(`${API_BASE_URL}${url}`, {
         headers: token ? { Authorization: `Bearer ${token}` } : undefined
@@ -600,7 +741,83 @@ export function AdminApplicationCasePage() {
             {loading ? (
               <div className="panel review-loading-panel"><p className="subtle">Caricamento profilo in corso…</p></div>
             ) : (
-              <SupplierProfileView isAlboB={isAlboB} sections={sections} />
+              <>
+                <SupplierProfileView isAlboB={isAlboB} sections={sections} />
+                {documentRows.length > 0 ? (
+                  <div className="panel review-docs-panel">
+                    <div className="review-side-panel-head">
+                      <h4><FileText size={15} /> Documenti allegati</h4>
+                      <span className="review-side-count">{documentRows.length} file</span>
+                    </div>
+                    <div className="review-doc-list">
+                      {documentRows.map((row) => (
+                        <div key={row.id} className="review-doc-row">
+                          <div className="review-doc-icon">
+                            <FileText size={16} />
+                          </div>
+                          <div className="review-doc-info">
+                            <span className="review-doc-name">{row.label}</span>
+                            <span className="review-doc-section">{row.sectionLabel}</span>
+                          </div>
+                          <button type="button" className="review-doc-open-btn" disabled={!row.hasLink}
+                            onClick={() => void openDocument(row.url)}>
+                            <ExternalLink size={13} /> Apri
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+                {timelineEvents.length > 0 ? (
+                  <div className="panel review-history-panel">
+                    <div className="review-side-panel-head">
+                      <h4><History size={15} /> Cronologia revisioni</h4>
+                      <span className="review-side-count">{timelineEvents.length} eventi</span>
+                    </div>
+                    <div className="review-history-snake" aria-label="Cronologia revisioni">
+                      {historyRows.map((row, rowIndex) => (
+                        <div
+                          key={`history-row-${rowIndex}`}
+                          className={`review-history-snake-row${rowIndex % 2 === 1 ? " is-reverse" : ""}`}
+                        >
+                          {row.map((item, itemIndex) => {
+                            const timelineIndex = rowIndex * HISTORY_SNAKE_ROW_SIZE + itemIndex;
+                            const isLastEvent = timelineIndex === timelineEvents.length - 1;
+                            return (
+                              <div
+                                key={item.id}
+                                className={[
+                                  "review-history-node",
+                                  isLastEvent ? "item-latest" : ""
+                                ].filter(Boolean).join(" ")}
+                              >
+                                <div className="review-history-node-dot">{timelineIndex + 1}</div>
+                                <div className="review-history-node-content">
+                                  <strong className="review-history-node-title">{item.title}</strong>
+                                  <div className="review-history-node-top">
+                                    <span className={`review-history-status tone-${item.tone}`}>
+                                      {item.badge}
+                                    </span>
+                                    {item.decision ? (
+                                      <span className={`review-history-decision ${item.decision === "approve" ? "dec-approve" : "dec-reject"}`}>
+                                        {item.decision === "approve" ? "Approvata" : "Non approvata"}
+                                      </span>
+                                    ) : null}
+                                  </div>
+                                  <span className="review-history-date">{new Date(item.occurredAt).toLocaleString("it-IT")}</span>
+                                  {item.detail ? (
+                                    <p className="review-history-detail">{item.detail}</p>
+                                  ) : null}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+              </>
             )}
           </div>
 
@@ -740,27 +957,6 @@ export function AdminApplicationCasePage() {
               ) : null}
             </div>
 
-            {/* Documents panel */}
-            {documentRows.length > 0 ? (
-              <div className="panel review-docs-panel">
-                <h4><FileText size={15} /> Documenti allegati</h4>
-                <div className="review-doc-list">
-                  {documentRows.map((row) => (
-                    <div key={row.id} className="review-doc-row">
-                      <div className="review-doc-info">
-                        <span className="review-doc-name">{row.label}</span>
-                        <span className="review-doc-section">{row.sectionLabel}</span>
-                      </div>
-                      <button type="button" className="review-doc-open-btn" disabled={!row.hasLink}
-                        onClick={() => void openDocument(row.url)}>
-                        Apri
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-
             {/* Integration request status */}
             {latestIntegrationRequest ? (
               <div className="panel review-integration-status-panel">
@@ -794,47 +990,20 @@ export function AdminApplicationCasePage() {
 
             {/* Internal notes */}
             <div className="panel review-notes-panel">
-              <h4><MessageSquare size={15} /> Note interne</h4>
+              <div className="review-side-panel-head">
+                <h4><MessageSquare size={15} /> Note interne</h4>
+                <span className="review-admin-only-pill">Solo admin</span>
+              </div>
               <p className="subtle review-notes-hint">Visibili solo agli amministratori, non al fornitore.</p>
               <textarea className="review-compact-textarea" rows={4} value={internalNotes}
                 onChange={(e) => setInternalNotes(e.target.value)} placeholder="Scrivi annotazioni interne…" />
-              <button type="button" className="home-btn home-btn-secondary review-save-notes-btn" onClick={saveInternalNotes}>
+              <button type="button" className="review-save-notes-btn" onClick={saveInternalNotes}>
                 <Save size={14} /> Salva nota
               </button>
             </div>
 
           </div>{/* end sidebar */}
         </div>{/* end review-content-grid */}
-
-        {/* ── History timeline ── */}
-        {reviewHistory.length > 0 ? (
-          <div className="panel review-history-panel">
-            <h4><History size={15} /> Cronologia revisioni</h4>
-            <div className="review-history-timeline">
-              {reviewHistory.map((item, idx) => (
-                <div key={item.id} className={`review-history-item${idx === 0 ? " item-latest" : ""}`}>
-                  <div className="review-history-dot" />
-                  <div className="review-history-content">
-                    <div className="review-history-top">
-                      <span className={`review-history-status tone-${historyStatusTone(item.status)}`}>
-                        {historyStatusLabel(item.status)}
-                      </span>
-                      {item.decision ? (
-                        <span className={`review-history-decision ${item.decision === "APPROVED" ? "dec-approve" : "dec-reject"}`}>
-                          {item.decision === "APPROVED" ? "Approvata" : "Non approvata"}
-                        </span>
-                      ) : null}
-                      <span className="review-history-date">{new Date(item.updatedAt).toLocaleString("it-IT")}</span>
-                    </div>
-                    {item.slaDueAt ? (
-                      <p className="review-history-detail">Scadenza: {new Date(item.slaDueAt).toLocaleDateString("it-IT")}</p>
-                    ) : null}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        ) : null}
 
       </section>
 

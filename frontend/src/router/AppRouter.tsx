@@ -11,6 +11,8 @@ import { isRevampEmailVerified } from "../utils/revampEmailVerification";
 const LoginPage = lazy(() => import("../pages/auth/LoginPage").then((m) => ({ default: m.LoginPage })));
 const RegisterPage = lazy(() => import("../pages/auth/RegisterPage").then((m) => ({ default: m.RegisterPage })));
 const VerifyOtpPage = lazy(() => import("../pages/auth/VerifyOtpPage").then((m) => ({ default: m.VerifyOtpPage })));
+const ForgotPasswordPage = lazy(() => import("../pages/auth/ForgotPasswordPage").then((m) => ({ default: m.ForgotPasswordPage })));
+const ForgotPasswordVerifyPage = lazy(() => import("../pages/auth/ForgotPasswordVerifyPage").then((m) => ({ default: m.ForgotPasswordVerifyPage })));
 const AcceptAdminInvitePage = lazy(() => import("../pages/auth/AcceptAdminInvitePage").then((m) => ({ default: m.AcceptAdminInvitePage })));
 const HomePage = lazy(() => import("../pages/home/HomePage").then((m) => ({ default: m.HomePage })));
 const PrivacyPolicyPage = lazy(() => import("../pages/legal/PrivacyPolicyPage").then((m) => ({ default: m.PrivacyPolicyPage })));
@@ -30,6 +32,7 @@ const RevampStep5DichiarazioniPage = lazy(() => import("../pages/revamp/RevampSt
 const RevampRecapPage = lazy(() => import("../pages/revamp/RevampRecapPage").then((m) => ({ default: m.RevampRecapPage })));
 const RevampSupplierDashboardPage = lazy(() => import("../pages/revamp/RevampSupplierDashboardPage").then((m) => ({ default: m.RevampSupplierDashboardPage })));
 const RevampSupplierHomeRedirect = lazy(() => import("../pages/revamp/RevampSupplierHomeRedirect").then((m) => ({ default: m.RevampSupplierHomeRedirect })));
+const RevampSupplierIntegrationRequestPage = lazy(() => import("../pages/revamp/RevampSupplierIntegrationRequestPage").then((m) => ({ default: m.RevampSupplierIntegrationRequestPage })));
 const RevampAlboBStep1DatiAziendaliPage = lazy(() => import("../pages/revamp/RevampAlboBStep1DatiAziendaliPage").then((m) => ({ default: m.RevampAlboBStep1DatiAziendaliPage })));
 const RevampAlboBStep2StrutturaDimensionePage = lazy(() => import("../pages/revamp/RevampAlboBStep2StrutturaDimensionePage").then((m) => ({ default: m.RevampAlboBStep2StrutturaDimensionePage })));
 const RevampAlboBStep3ServiziPage = lazy(() => import("../pages/revamp/RevampAlboBStep3ServiziPage").then((m) => ({ default: m.RevampAlboBStep3ServiziPage })));
@@ -58,7 +61,7 @@ function RequireRevampOtpForSupplier({ children }: { children: JSX.Element }) {
 
   if (!featureFlags.newWizardAb) return children;
   if (!auth || auth.role !== "SUPPLIER") return children;
-  if (isRevampEmailVerified()) return children;
+  if (auth.emailVerified || isRevampEmailVerified()) return children;
   return <Navigate to="/verify-otp" replace />;
 }
 
@@ -105,6 +108,8 @@ export function AppRouter() {
           <Route path="/privacy" element={<PrivacyPolicyPage />} />
           <Route path="/login" element={auth ? <Navigate to={authenticatedHome} replace /> : <LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
+          <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+          <Route path="/forgot-password/verify" element={<ForgotPasswordVerifyPage />} />
           <Route path="/activate-account" element={<AcceptAdminInvitePage />} />
           <Route path="/accept-admin-invite" element={<AcceptAdminInvitePage />} />
           {featureFlags.newWizardAb ? (
@@ -279,6 +284,18 @@ export function AppRouter() {
               element={(
                 <RequireAuth allowedRoles={["SUPPLIER"]}>
                   <RevampSupplierDashboardPage />
+                </RequireAuth>
+              )}
+            />
+          ) : null}
+          {featureFlags.newWizardAb ? (
+            <Route
+              path="/application/:applicationId/integration-request"
+              element={(
+                <RequireAuth allowedRoles={["SUPPLIER"]}>
+                  <RequireRevampOtpForSupplier>
+                    <RevampSupplierIntegrationRequestPage />
+                  </RequireRevampOtpForSupplier>
                 </RequireAuth>
               )}
             />
